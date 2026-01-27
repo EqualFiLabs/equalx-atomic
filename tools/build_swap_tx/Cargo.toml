@@ -1,0 +1,29 @@
+[package]
+name = "build_swap_tx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+adaptor-clsag = { path = "../../crates/adaptor-clsag" }
+anyhow = "1.0"
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+monero-oxide = { git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc", default-features = false }
+monero-rpc = { path = "../../crates/monero-rpc" }
+monero-wallet-core = { path = "../../crates/monero-wallet-core" }
+rand_chacha = "0.3"
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+curve25519-dalek = "4.1"
+tx_builder = { path = "../../crates/tx_builder" }
+monero-address = { git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc" }
+zeroize = "1.8"
+
+[dev-dependencies]
+tempfile = "3"
+crossbeam-channel = "0.5"
+twoway = "0.2"
+monero-generators = { git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc" }

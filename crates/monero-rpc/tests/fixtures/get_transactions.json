@@ -1,0 +1,22 @@
+{
+  "credits": 0,
+  "status": "OK",
+  "top_hash": "",
+  "txs": [{
+    "as_hex": "",
+    "as_json": "{\n  \"version\": 2, \n  \"unlock_time\": 34060, \n  \"vin\": [ {\n      \"gen\": {\n        \"height\": 34000\n      }\n    }\n  ], \n  \"vout\": [ {\n      \"amount\": 33996912826915, \n      \"target\": {\n        \"key\": \"b0c60732ab9ed2d576c4feda23afe99e5563bcfa585a1c5b1f5102110babc5d3\"\n      }\n    }\n  ], \n  \"extra\": [ 1, 193, 4, 215, 255, 68, 23, 243, 43, 18, 177, 194, 20, 144, 72, 66, 88, 145, 35, 204, 200, 0, 199, 191, 150, 185, 3, 110, 1, 254, 173, 142, 49\n  ], \n  \"rct_signatures\": {\n    \"type\": 0\n  }\n}",
+    "block_height": 34000,
+    "block_timestamp": 1521144502,
+    "confirmations": 1945038,
+    "double_spend_seen": false,
+    "in_pool": false,
+    "output_indices": [0],
+    "prunable_as_hex": "",
+    "prunable_hash": "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+    "pruned_as_hex": "028c8a0201ffd0890201a3b4a6afb8dd0702b0c60732ab9ed2d576c4feda23afe99e5563bcfa585a1c5b1f5102110babc5d32101c104d7ff4417f32b12b1c214904842589123ccc800c7bf96b9036e01fead8e3100",
+    "tx_hash": "1d884b43c9ef81326ddb4ae79e2ca857227ee917c122a5eb58ed9fcd3288afa4"
+  }],
+  "txs_as_hex": [""],
+  "txs_as_json": ["{\n  \"version\": 2, \n  \"unlock_time\": 34060, \n  \"vin\": [ {\n      \"gen\": {\n        \"height\": 34000\n      }\n    }\n  ], \n  \"vout\": [ {\n      \"amount\": 33996912826915, \n      \"target\": {\n        \"key\": \"b0c60732ab9ed2d576c4feda23afe99e5563bcfa585a1c5b1f5102110babc5d3\"\n      }\n    }\n  ], \n  \"extra\": [ 1, 193, 4, 215, 255, 68, 23, 243, 43, 18, 177, 194, 20, 144, 72, 66, 88, 145, 35, 204, 200, 0, 199, 191, 150, 185, 3, 110, 1, 254, 173, 142, 49\n  ], \n  \"rct_signatures\": {\n    \"type\": 0\n  }\n}"],
+  "untrusted": false
+}

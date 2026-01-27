@@ -1,0 +1,11 @@
+[package]
+name = "send_tx"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+anyhow = "1.0"
+monero-rpc = { path = "../../crates/monero-rpc" }
+monero-oxide = { git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc" }
+hex = "0.4"

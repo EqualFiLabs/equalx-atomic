@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/adaptor-clsag",
+    "crates/equalx-sdk",
+    "crates/cli",
+    "crates/ffi-c",
+    "crates/ffi-wasm",
+    "crates/monero-rpc",
+    "crates/monero-wallet-core",
+    "crates/presig-envelope",
+    "crates/tx_builder",
+    "crates/watcher",
+    "tools/build_swap_tx",
+    "tools/export_tx",
+    "tools/send_tx",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["EqualX"]
+
+[patch.crates-io]
+monero-oxide = { git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc" }
+monero-generators = { git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc" }
+monero-address = { git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc" }
+
+[workspace.dependencies]
+monero-wallet-core = { path = "crates/monero-wallet-core" }

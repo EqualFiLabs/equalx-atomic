@@ -1,0 +1,32 @@
+[package]
+name = "equalx-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+adaptor-clsag = { path = "../adaptor-clsag" }
+alloy-network = "0.7"
+alloy-primitives = "0.8"
+alloy-provider = { version = "0.7", features = ["reqwest"] }
+alloy-rpc-types = "0.7"
+alloy-signer = "0.7"
+alloy-signer-local = "0.7"
+alloy-sol-types = "0.8"
+alloy-transport-http = "0.7"
+curve25519-dalek = { version = "4.1", default-features = false, features = ["alloc", "rand_core", "group"] }
+hex = "0.4"
+monero-address = { git = "https://github.com/monero-oxide/monero-oxide.git", package = "monero-address", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc" }
+monero-oxide = { git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc", default-features = false, features = ["std"] }
+monero-generators = { git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc", default-features = false, features = ["std"] }
+rand = "0.8"
+sha3 = "0.10"
+log = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { version = "0.11", default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+monero-rpc = { path = "../monero-rpc" }
+watcher = { path = "../watcher" }
+monero-wallet-core = { path = "../monero-wallet-core" }

@@ -1,0 +1,16 @@
+[package]
+name = "export_tx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+hex = "0.4"
+monero-rpc = { path = "../../crates/monero-rpc" }
+monero-oxide = { git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tx_builder = { path = "../../crates/tx_builder" }

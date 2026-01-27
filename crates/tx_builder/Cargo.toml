@@ -1,0 +1,29 @@
+[package]
+name = "tx_builder"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Thin adapter over monero-oxide for tx assembly and CLSAG injection."
+
+[features]
+default = []
+moxide = []
+
+[dependencies]
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+hex = "0.4"
+monero-oxide = { git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc", default-features = false }
+# Deterministic RNG for bulletproof placeholders
+rand_chacha = "0.3"
+rand = "0.8"
+# Scalar math needed for commitments/CLSAG placeholders
+curve25519-dalek = { version = "4.1", features = ["alloc"] }
+zeroize = "1"
+
+[dev-dependencies]
+proptest = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+monero-rpc = { path = "../monero-rpc" }
+monero-wallet-core = { path = "../monero-wallet-core" }

@@ -1,0 +1,31 @@
+[package]
+name = "ffi-wasm"
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+adaptor-clsag = { path = "../adaptor-clsag" }
+alloy-primitives = "0.8"
+alloy-signer = "0.7"
+alloy-signer-local = "0.7"
+equalx-sdk = { path = "../equalx-sdk" }
+monero-oxide = { package = "monero-oxide", git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc", default-features = false, features = ["std"] }
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+wasm-bindgen = "0.2"
+getrandom = { version = "0.2", features = ["js"], optional = true }
+getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"], optional = true }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[features]
+default = ["js-rng"]
+js-rng = ["dep:getrandom", "dep:getrandom03"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

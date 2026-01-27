@@ -1,0 +1,39 @@
+[package]
+name = "eswp-cli"
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+adaptor-clsag = { path = "../adaptor-clsag" }
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+anyhow = "1"
+presig-envelope = { path = "../presig-envelope" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+alloy = "0.7"
+alloy-provider = { version = "0.7", features = ["reqwest"] }
+alloy-primitives = "0.8"
+alloy-network = "0.7"
+alloy-signer-local = "0.7"
+alloy-signer = "0.7"
+alloy-sol-types = "0.8"
+alloy-rpc-types = "0.7"
+alloy-contract = "0.7"
+base64 = "0.21"
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+equalx-sdk = { path = "../equalx-sdk" }
+monero-rpc = { path = "../monero-rpc" }
+watcher = { path = "../watcher" }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+k256 = { version = "0.13", features = ["arithmetic"] }
+rand_core = "0.6"
+sha2 = "0.10"
+monero-oxide = { git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc", default-features = false }
+
+[dev-dependencies]
+assert_cmd = "2"
+tempfile = "3"

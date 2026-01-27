@@ -1,0 +1,15 @@
+{
+  "noncanonical_scalars": [
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "f4ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "1000000000000000000000000000000000000000000000000000000000000000"
+  ],
+  "noncanonical_points": [
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"
+  ],
+  "duplicate_ring": [
+    "2f1132ca61ab38dff00f2fea3228f24c6c71d58085b80e47e19515cb27e8d047",
+    "2f1132ca61ab38dff00f2fea3228f24c6c71d58085b80e47e19515cb27e8d047"
+  ]
+}

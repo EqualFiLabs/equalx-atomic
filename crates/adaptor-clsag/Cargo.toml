@@ -1,0 +1,21 @@
+[package]
+name = "adaptor-clsag"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "CLSAG adaptor (EqualX) — pre-sig, completion, verify, extraction"
+
+[dependencies]
+hkdf = "0.12"
+sha3 = "0.10"
+curve25519-dalek = { version = "4.1", features = ["alloc"] }
+rand_chacha = "0.3"
+thiserror = "1.0"
+tx_builder = { path = "../tx_builder" }
+monero-oxide = { git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc", default-features = false }
+monero-generators = { git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc", default-features = false }
+merlin = "3"
+zeroize = "1"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

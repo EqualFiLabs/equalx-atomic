@@ -1,0 +1,25 @@
+[package]
+name = "ffi-c"
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+adaptor-clsag = { path = "../adaptor-clsag" }
+alloy-primitives = "0.8"
+alloy-signer = "0.7"
+alloy-signer-local = "0.7"
+equalx-sdk = { path = "../equalx-sdk" }
+libc = "0.2"
+monero-oxide = { package = "monero-oxide", git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc" }
+
+[build-dependencies]
+cbindgen = "0.29"
+
+[dev-dependencies]
+hex = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
