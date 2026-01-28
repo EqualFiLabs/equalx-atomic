@@ -1,0 +1,303 @@
+The content has been copied to your clipboard. Please paste it here to complete the file creation.{
+  "repo_notes": [
+    {
+      "content": ""
+    }
+  ],
+  "pages": [
+    {
+      "title": "Overview",
+      "purpose": "Introduce the EqualX atomic swap protocol, explaining its purpose as a trustless cross-chain bridge between Monero and EVM chains using CLSAG adaptor signatures",
+      "page_notes": [
+        {
+          "content": "Do not say that it is production ready. Please say that it is ready for review."
+        }
+      ]
+    },
+    {
+      "title": "System Architecture",
+      "purpose": "High-level overview of system components: smart contracts, SDK, FFI layers, and how they interact",
+      "parent": "Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Technology Stack",
+      "purpose": "Overview of the Rust crates, dependencies, and external integrations (monero-oxide, Alloy, etc.)",
+      "parent": "Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Core Concepts",
+      "purpose": "Explain the fundamental concepts required to understand the atomic swap protocol",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "CLSAG Adaptor Signatures",
+      "purpose": "Detailed explanation of CLSAG adaptor signatures: pre-signature generation, biasing, completion, and tau extraction",
+      "parent": "Core Concepts",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Atomic Swap Protocol Flow",
+      "purpose": "Step-by-step walkthrough of the complete atomic swap lifecycle from reservation to settlement",
+      "parent": "Core Concepts",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Settlement Context and Binding",
+      "purpose": "Explain how settlement contexts bind signatures to specific swaps and prevent replay attacks",
+      "parent": "Core Concepts",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "EVM Smart Contracts",
+      "purpose": "Documentation of the Solidity smart contracts that manage the EVM side of atomic swaps",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "AtomicDesk Contract",
+      "purpose": "Entry point contract for desk registration, reservation creation, and hashlock management",
+      "parent": "EVM Smart Contracts",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "SettlementEscrow Contract",
+      "purpose": "Collateral management, settlement validation, and refund logic",
+      "parent": "EVM Smart Contracts",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Mailbox System",
+      "purpose": "Encrypted on-chain communication between swap participants",
+      "parent": "EVM Smart Contracts",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Encryption Protocol",
+      "purpose": "ECDH key exchange, ChaCha20-Poly1305 encryption, and AAD binding for secure messaging",
+      "parent": "EVM Smart Contracts",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Message Flow and Types",
+      "purpose": "Context, PreSig, and FinalSig message types, ordering, and access control",
+      "parent": "EVM Smart Contracts",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Public Key Registry",
+      "purpose": "EncPubRegistry for public key discovery and the dual registry architecture",
+      "parent": "EVM Smart Contracts",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Monero Integration",
+      "purpose": "Overview of Monero-side operations: transaction building, signing, and monitoring",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Transaction Building",
+      "purpose": "Using build_swap_tx and tx_builder to construct Monero transactions with adaptor signatures",
+      "parent": "Monero Integration",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Ring Construction and Decoy Selection",
+      "purpose": "Gamma distribution-based decoy selection, sanity checks, and ring validation",
+      "parent": "Monero Integration",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Output Generation and Fee Convergence",
+      "purpose": "ECDH key derivation, view tags, change splitting, and iterative fee calculation",
+      "parent": "Monero Integration",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "CLSAG Pre-Signature Injection",
+      "purpose": "Generating pre-signatures and injecting them into transaction blobs",
+      "parent": "Monero Integration",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Transaction Finalization",
+      "purpose": "Completing pre-signed transactions and replacing CLSAG regions with final signatures",
+      "parent": "Monero Integration",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Monero Watcher",
+      "purpose": "Monitoring the Monero blockchain for spent key images and extracting tau values",
+      "parent": "Monero Integration",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Monero RPC Client",
+      "purpose": "MoneroRpc and MoneroWalletRpc clients for interacting with daemons and wallets",
+      "parent": "Monero Integration",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Wallet Core and Key Management",
+      "purpose": "monero-wallet-core for scanning, spend planning, and subaddress derivation",
+      "parent": "Monero Integration",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "SDK Guide",
+      "purpose": "Using the equalx-sdk for building atomic swap applications",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Core SDK Overview",
+      "purpose": "Architecture of equalx-sdk: adaptor module, transport abstraction, and contract clients",
+      "parent": "SDK Guide",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Creating Pre-Adaptors",
+      "purpose": "Using make_pre_adaptor to generate CLSAG pre-signatures in the SDK",
+      "parent": "SDK Guide",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Completing and Verifying Signatures",
+      "purpose": "SDK functions for signature completion, verification, and tau extraction",
+      "parent": "SDK Guide",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "EVM Transport Abstraction",
+      "purpose": "EvmTransport, EvmViewTransport, and EvmMessageSigner traits for contract interactions",
+      "parent": "SDK Guide",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Contract Clients",
+      "purpose": "EscrowClient, MailboxClient, and QuoteBoardClient for smart contract operations",
+      "parent": "SDK Guide",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "FFI Integration",
+      "purpose": "Foreign function interfaces for multi-platform support",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    }
+  ]
+}
