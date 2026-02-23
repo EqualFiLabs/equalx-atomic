@@ -448,8 +448,12 @@ mod tests {
         DaemonTransaction, GetOutsRequest, GetOutsResponse, GetTransactionsRequest,
         GetTransactionsResponse, OutputEntry,
     };
+    use proptest::prelude::*;
     use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
-    use std::sync::{Arc, Mutex};
+    use std::{
+        collections::{BTreeSet, VecDeque},
+        sync::{Arc, Mutex, OnceLock},
+    };
     use tx_builder::{
         assemble_unsigned_tx, compute_clsag_message_hash, convert::key_offsets_from_global_indices,
         Inputs, Outputs, RctMeta,
@@ -457,7 +461,7 @@ mod tests {
 
     #[test]
     fn watcher_extracts_tau_from_mock_rpc() {
-        let fixture = Fixture::build();
+        let fixture = shared_fixture();
         let rpc = MockRpc::new(&fixture);
         let watcher = MoneroWatcher::with_rpc(rpc, vec![fixture.target.clone()]);
         let event = watcher.poll_once().expect("poll").expect("event");
@@ -534,6 +538,15 @@ mod tests {
                 ring_map,
             }
         }
+    }
+
+    fn fixture_template() -> &'static Fixture {
+        static FIXTURE: OnceLock<Fixture> = OnceLock::new();
+        FIXTURE.get_or_init(Fixture::build)
+    }
+
+    fn shared_fixture() -> Fixture {
+        fixture_template().clone()
     }
 
     #[derive(Clone)]
@@ -714,6 +727,172 @@ mod tests {
         (inputs, outputs, meta)
     }
 
+    #[derive(Clone)]
+    struct SequencedRpc {
+        inner: MockRpc,
+        statuses: Arc<Mutex<VecDeque<u32>>>,
+    }
+
+    impl SequencedRpc {
+        fn new(fixture: &Fixture, statuses: Vec<u32>) -> Self {
+            Self {
+                inner: MockRpc::new(fixture),
+                statuses: Arc::new(Mutex::new(VecDeque::from(statuses))),
+            }
+        }
+    }
+
+    impl WatcherRpc for SequencedRpc {
+        fn is_key_image_spent(&self, key_images: &[Vec<u8>]) -> Result<Vec<u32>> {
+            ensure!(
+                !key_images.is_empty(),
+                "mock expects at least one key image"
+            );
+            let mut statuses = self.statuses.lock().unwrap();
+            let state = statuses.pop_front().unwrap_or(2);
+            Ok(vec![state])
+        }
+
+        fn get_transactions(
+            &self,
+            request: &GetTransactionsRequest,
+        ) -> Result<GetTransactionsResponse> {
+            self.inner.get_transactions(request)
+        }
+
+        fn get_outs(&self, request: &GetOutsRequest) -> Result<GetOutsResponse> {
+            self.inner.get_outs(request)
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct SpendTransitionSequence {
+        prefix_states: Vec<u32>,
+    }
+
+    fn arb_non_spent_state() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), 3u32..u32::MAX]
+    }
+
+    fn arb_spend_transition_sequence() -> impl Strategy<Value = SpendTransitionSequence> {
+        prop::collection::vec(arb_non_spent_state(), 0..8)
+            .prop_map(|prefix_states| SpendTransitionSequence { prefix_states })
+    }
+
+    #[derive(Clone, Debug)]
+    enum RpcErrorScenario {
+        StatusMismatch { returned_statuses: usize },
+        MissingTransaction { daemon_marks_missing: bool },
+        ShortGetOuts { returned_entries: usize },
+    }
+
+    fn arb_rpc_error_scenario() -> impl Strategy<Value = RpcErrorScenario> {
+        prop_oneof![
+            (0usize..4usize)
+                .prop_filter("must mismatch one target", |len| *len != 1)
+                .prop_map(|returned_statuses| RpcErrorScenario::StatusMismatch {
+                    returned_statuses
+                }),
+            any::<bool>().prop_map(|daemon_marks_missing| {
+                RpcErrorScenario::MissingTransaction {
+                    daemon_marks_missing,
+                }
+            }),
+            (0usize..4usize)
+                .prop_map(|returned_entries| RpcErrorScenario::ShortGetOuts { returned_entries }),
+        ]
+    }
+
+    fn arb_ring_indices() -> impl Strategy<Value = Vec<u64>> {
+        (1usize..384usize, any::<u16>()).prop_map(|(len, start)| {
+            let start = start as u64;
+            (0..len).map(|offset| start + offset as u64).collect()
+        })
+    }
+
+    struct ErrorScenarioRpc {
+        fixture: Fixture,
+        scenario: RpcErrorScenario,
+    }
+
+    impl ErrorScenarioRpc {
+        fn new(fixture: Fixture, scenario: RpcErrorScenario) -> Self {
+            Self { fixture, scenario }
+        }
+    }
+
+    impl WatcherRpc for ErrorScenarioRpc {
+        fn is_key_image_spent(&self, _key_images: &[Vec<u8>]) -> Result<Vec<u32>> {
+            match self.scenario {
+                RpcErrorScenario::StatusMismatch { returned_statuses } => {
+                    Ok(vec![0u32; returned_statuses])
+                }
+                RpcErrorScenario::MissingTransaction { .. }
+                | RpcErrorScenario::ShortGetOuts { .. } => Ok(vec![2u32]),
+            }
+        }
+
+        fn get_transactions(
+            &self,
+            _request: &GetTransactionsRequest,
+        ) -> Result<GetTransactionsResponse> {
+            match self.scenario {
+                RpcErrorScenario::StatusMismatch { .. } => Ok(GetTransactionsResponse::default()),
+                RpcErrorScenario::MissingTransaction {
+                    daemon_marks_missing,
+                } => {
+                    let mut response = GetTransactionsResponse::default();
+                    if daemon_marks_missing {
+                        response.missed_tx = vec![self.fixture.target.tx_hash.clone()];
+                    }
+                    Ok(response)
+                }
+                RpcErrorScenario::ShortGetOuts { .. } => {
+                    let mut entry = DaemonTransaction::default();
+                    entry.as_hex = self.fixture.tx_hex.clone();
+                    entry.tx_hash = self.fixture.target.tx_hash.clone();
+                    entry.in_pool = false;
+                    entry.output_indices = self.fixture.ring_map.keys().copied().collect();
+
+                    let mut response = GetTransactionsResponse::default();
+                    response.txs = vec![entry];
+                    Ok(response)
+                }
+            }
+        }
+
+        fn get_outs(&self, request: &GetOutsRequest) -> Result<GetOutsResponse> {
+            match self.scenario {
+                RpcErrorScenario::ShortGetOuts { returned_entries } => {
+                    let mut response = GetOutsResponse::default();
+                    let max = request.outputs.len().saturating_sub(1);
+                    let keep = returned_entries.min(max);
+                    response.outs = request
+                        .outputs
+                        .iter()
+                        .take(keep)
+                        .map(|output| {
+                            let entry =
+                                self.fixture.ring_map.get(&output.index).ok_or_else(|| {
+                                    anyhow!("ring member missing for gi {}", output.index)
+                                })?;
+                            Ok(OutputEntry {
+                                height: 0,
+                                key: hex::encode(entry.0),
+                                mask: hex::encode(entry.1),
+                                txid: format!("short-{}", output.index),
+                                unlocked: true,
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    Ok(response)
+                }
+                RpcErrorScenario::StatusMismatch { .. }
+                | RpcErrorScenario::MissingTransaction { .. } => unreachable!(),
+            }
+        }
+    }
+
     #[derive(Default)]
     struct InPoolRpc;
 
@@ -853,7 +1032,7 @@ mod tests {
     }
 
     fn sample_target() -> WatchTarget {
-        Fixture::build().target
+        shared_fixture().target
     }
 
     #[test]
@@ -896,5 +1075,85 @@ mod tests {
     fn fetch_ring_metadata_rejects_short_response() {
         let indices = vec![1u64, 2u64];
         assert!(fetch_ring_metadata(&ShortGetOutsRpc, &indices).is_err());
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 24,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property 21: Monero watcher spend detection.
+        #[test]
+        fn property21_monero_watcher_spend_detection(sequence in arb_spend_transition_sequence()) {
+            let fixture = shared_fixture();
+            let mut statuses = sequence.prefix_states.clone();
+            statuses.push(2u32);
+
+            let watcher = MoneroWatcher::with_rpc(
+                SequencedRpc::new(&fixture, statuses),
+                vec![fixture.target.clone()],
+            );
+
+            for _ in 0..sequence.prefix_states.len() {
+                let poll = watcher.poll_once().expect("poll");
+                prop_assert!(poll.is_none());
+            }
+
+            let event = watcher.poll_once().expect("poll").expect("event");
+            prop_assert_eq!(event.key_image, fixture.target.key_image);
+            prop_assert_eq!(event.tx_hash, fixture.target.tx_hash);
+            prop_assert_eq!(event.spend_state, SpendState::Confirmed);
+            prop_assert_eq!(event.tau, fixture.tau);
+        }
+
+        /// Property 23: Monero watcher RPC error handling.
+        #[test]
+        fn property23_monero_watcher_rpc_error_handling(scenario in arb_rpc_error_scenario()) {
+            let fixture = shared_fixture();
+            let watcher = MoneroWatcher::with_rpc(
+                ErrorScenarioRpc::new(fixture.clone(), scenario.clone()),
+                vec![fixture.target.clone()],
+            );
+
+            let err = watcher.poll_once().expect_err("scenario must fail");
+            let msg = err.to_string();
+            match scenario {
+                RpcErrorScenario::StatusMismatch { .. } => {
+                    prop_assert!(msg.contains("statuses"));
+                }
+                RpcErrorScenario::MissingTransaction { .. } => {
+                    prop_assert!(msg.contains("transaction"));
+                }
+                RpcErrorScenario::ShortGetOuts { .. } => {
+                    prop_assert!(
+                        msg.contains("get_outs")
+                            || msg.contains("ring metadata")
+                            || msg.contains("build clsag context")
+                    );
+                }
+            }
+        }
+
+        /// Property 24: Monero watcher ring metadata batching.
+        #[test]
+        fn property24_monero_watcher_ring_metadata_batching(indices in arb_ring_indices()) {
+            let rpc = ChunkingRpc::new();
+            let metadata = fetch_ring_metadata(&rpc, &indices).expect("metadata");
+
+            let calls = rpc.calls.lock().unwrap().clone();
+            let expected_calls = (indices.len() + GET_OUTS_BATCH_LIMIT - 1) / GET_OUTS_BATCH_LIMIT;
+            prop_assert_eq!(calls.len(), expected_calls);
+            prop_assert!(calls.iter().all(|chunk| chunk.len() <= GET_OUTS_BATCH_LIMIT));
+
+            let expected: BTreeSet<u64> = indices.iter().copied().collect();
+            let observed_calls: BTreeSet<u64> = calls
+                .iter()
+                .flat_map(|chunk| chunk.iter().copied())
+                .collect();
+            let observed_meta: BTreeSet<u64> = metadata.keys().copied().collect();
+            prop_assert_eq!(observed_calls, expected.clone());
+            prop_assert_eq!(observed_meta, expected);
+        }
     }
 }

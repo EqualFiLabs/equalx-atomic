@@ -342,11 +342,703 @@ mod tests {
     use super::*;
     use alloy_primitives::{address, B256};
     use alloy_sol_types::SolValue;
+    use proptest::prelude::*;
 
     fn encode_address_topic(addr: Address) -> B256 {
         let mut buf = [0u8; 32];
         buf[12..].copy_from_slice(addr.as_slice());
         B256::from(buf)
+    }
+
+    #[derive(Clone, Debug)]
+    enum GeneratedEvmEvent {
+        ReservationCreated {
+            reservation_id: [u8; 32],
+            taker: Address,
+            desk: Address,
+            amount: U256,
+            counter: U256,
+        },
+        HashlockSet {
+            reservation_id: [u8; 32],
+            hashlock: [u8; 32],
+        },
+        AtomicReservationCreated {
+            reservation_id: [u8; 32],
+            desk_id: [u8; 32],
+            taker: Address,
+            asset: Address,
+            amount: U256,
+            settlement_digest: [u8; 32],
+            expiry: u64,
+            created_at: u64,
+        },
+        TrancheOpened {
+            tranche_id: [u8; 32],
+            desk_id: [u8; 32],
+            maker: Address,
+            asset: Address,
+            price_numerator: U256,
+            price_denominator: U256,
+            total_liquidity: U256,
+            min_fill: U256,
+            fee_bps: u16,
+            fee_payer: u8,
+            expiry: u64,
+        },
+        TakerTrancheOpened {
+            tranche_id: [u8; 32],
+            desk_id: [u8; 32],
+            taker: Address,
+            asset: Address,
+            price_numerator: U256,
+            price_denominator: U256,
+            total_liquidity: U256,
+            min_fill: U256,
+            fee_bps: u16,
+            fee_payer: u8,
+            expiry: u64,
+            posting_fee: U256,
+        },
+        TrancheReserved {
+            tranche_id: [u8; 32],
+            reservation_id: [u8; 32],
+            taker: Address,
+            amount: U256,
+            remaining_liquidity: U256,
+        },
+        TakerTrancheReserved {
+            tranche_id: [u8; 32],
+            reservation_id: [u8; 32],
+            maker: Address,
+            amount: U256,
+            remaining_liquidity: U256,
+        },
+        ReservationSettled {
+            reservation_id: [u8; 32],
+            tau: [u8; 32],
+        },
+        ReservationRefunded {
+            reservation_id: [u8; 32],
+            evidence: [u8; 32],
+        },
+    }
+
+    impl GeneratedEvmEvent {
+        fn encode(&self) -> (Vec<B256>, Vec<u8>) {
+            match self {
+                Self::ReservationCreated {
+                    reservation_id,
+                    taker,
+                    desk,
+                    amount,
+                    counter,
+                } => {
+                    let topics = vec![
+                        RESERVATION_CREATED_TOPIC,
+                        B256::from(*reservation_id),
+                        encode_address_topic(*taker),
+                        encode_address_topic(*desk),
+                    ];
+                    let data = SolValue::abi_encode(&ReservationCreatedData {
+                        amount: *amount,
+                        counter: *counter,
+                    });
+                    (topics, data)
+                }
+                Self::HashlockSet {
+                    reservation_id,
+                    hashlock,
+                } => {
+                    let topics = vec![HASHLOCK_SET_TOPIC, B256::from(*reservation_id)];
+                    let data = SolValue::abi_encode(&HashlockSetData {
+                        hashlock: FixedBytes::<32>::from(*hashlock),
+                    });
+                    (topics, data)
+                }
+                Self::AtomicReservationCreated {
+                    reservation_id,
+                    desk_id,
+                    taker,
+                    asset,
+                    amount,
+                    settlement_digest,
+                    expiry,
+                    created_at,
+                } => {
+                    let topics = vec![
+                        ATOMIC_RESERVATION_TOPIC,
+                        B256::from(*reservation_id),
+                        B256::from(*desk_id),
+                        encode_address_topic(*taker),
+                    ];
+                    let data = SolValue::abi_encode(&AtomicReservationData {
+                        asset: *asset,
+                        amount: *amount,
+                        settlementDigest: FixedBytes::<32>::from(*settlement_digest),
+                        expiry: *expiry,
+                        createdAt: *created_at,
+                    });
+                    (topics, data)
+                }
+                Self::TrancheOpened {
+                    tranche_id,
+                    desk_id,
+                    maker,
+                    asset,
+                    price_numerator,
+                    price_denominator,
+                    total_liquidity,
+                    min_fill,
+                    fee_bps,
+                    fee_payer,
+                    expiry,
+                } => {
+                    let topics = vec![
+                        TRANCHE_OPENED_TOPIC,
+                        B256::from(*tranche_id),
+                        B256::from(*desk_id),
+                        encode_address_topic(*maker),
+                    ];
+                    let data = SolValue::abi_encode(&TrancheOpenedData {
+                        asset: *asset,
+                        priceNumerator: *price_numerator,
+                        priceDenominator: *price_denominator,
+                        totalLiquidity: *total_liquidity,
+                        minFill: *min_fill,
+                        feeBps: *fee_bps,
+                        feePayer: *fee_payer,
+                        expiry: *expiry,
+                    });
+                    (topics, data)
+                }
+                Self::TakerTrancheOpened {
+                    tranche_id,
+                    desk_id,
+                    taker,
+                    asset,
+                    price_numerator,
+                    price_denominator,
+                    total_liquidity,
+                    min_fill,
+                    fee_bps,
+                    fee_payer,
+                    expiry,
+                    posting_fee,
+                } => {
+                    let topics = vec![
+                        TAKER_TRANCHE_OPENED_TOPIC,
+                        B256::from(*tranche_id),
+                        B256::from(*desk_id),
+                        encode_address_topic(*taker),
+                    ];
+                    let data = SolValue::abi_encode(&TakerTrancheOpenedData {
+                        asset: *asset,
+                        priceNumerator: *price_numerator,
+                        priceDenominator: *price_denominator,
+                        totalLiquidity: *total_liquidity,
+                        minFill: *min_fill,
+                        feeBps: *fee_bps,
+                        feePayer: *fee_payer,
+                        expiry: *expiry,
+                        postingFee: *posting_fee,
+                    });
+                    (topics, data)
+                }
+                Self::TrancheReserved {
+                    tranche_id,
+                    reservation_id,
+                    taker,
+                    amount,
+                    remaining_liquidity,
+                } => {
+                    let topics = vec![
+                        TRANCHE_RESERVED_TOPIC,
+                        B256::from(*tranche_id),
+                        B256::from(*reservation_id),
+                        encode_address_topic(*taker),
+                    ];
+                    let data = SolValue::abi_encode(&TrancheReservedData {
+                        amount: *amount,
+                        remainingLiquidity: *remaining_liquidity,
+                    });
+                    (topics, data)
+                }
+                Self::TakerTrancheReserved {
+                    tranche_id,
+                    reservation_id,
+                    maker,
+                    amount,
+                    remaining_liquidity,
+                } => {
+                    let topics = vec![
+                        TAKER_TRANCHE_RESERVED_TOPIC,
+                        B256::from(*tranche_id),
+                        B256::from(*reservation_id),
+                        encode_address_topic(*maker),
+                    ];
+                    let data = SolValue::abi_encode(&TrancheReservedData {
+                        amount: *amount,
+                        remainingLiquidity: *remaining_liquidity,
+                    });
+                    (topics, data)
+                }
+                Self::ReservationSettled {
+                    reservation_id,
+                    tau,
+                } => {
+                    let topics = vec![RESERVATION_SETTLED_TOPIC, B256::from(*reservation_id)];
+                    let data = SolValue::abi_encode(&ReservationSettledData {
+                        tau: FixedBytes::<32>::from(*tau),
+                    });
+                    (topics, data)
+                }
+                Self::ReservationRefunded {
+                    reservation_id,
+                    evidence,
+                } => {
+                    let topics = vec![RESERVATION_REFUNDED_TOPIC, B256::from(*reservation_id)];
+                    let data = SolValue::abi_encode(&ReservationRefundedData {
+                        evidence: FixedBytes::<32>::from(*evidence),
+                    });
+                    (topics, data)
+                }
+            }
+        }
+
+        fn decode_into_unit(&self, topics: &[B256], data: &[u8]) -> Result<()> {
+            match self {
+                Self::ReservationCreated { .. } => {
+                    decode_reservation_created(topics, data).map(|_| ())
+                }
+                Self::HashlockSet { .. } => decode_hashlock_set(topics, data).map(|_| ()),
+                Self::AtomicReservationCreated { .. } => {
+                    decode_atomic_reservation_created(topics, data).map(|_| ())
+                }
+                Self::TrancheOpened { .. } => decode_tranche_opened(topics, data).map(|_| ()),
+                Self::TakerTrancheOpened { .. } => {
+                    decode_taker_tranche_opened(topics, data).map(|_| ())
+                }
+                Self::TrancheReserved { .. } => decode_tranche_reserved(topics, data).map(|_| ()),
+                Self::TakerTrancheReserved { .. } => {
+                    decode_taker_tranche_reserved(topics, data).map(|_| ())
+                }
+                Self::ReservationSettled { .. } => {
+                    decode_reservation_settled(topics, data).map(|_| ())
+                }
+                Self::ReservationRefunded { .. } => {
+                    decode_reservation_refunded(topics, data).map(|_| ())
+                }
+            }
+        }
+
+        fn assert_decodes(&self) {
+            let (topics, data) = self.encode();
+            match self {
+                Self::ReservationCreated {
+                    reservation_id,
+                    taker,
+                    desk,
+                    amount,
+                    counter,
+                } => {
+                    let record =
+                        decode_reservation_created(&topics, &data).expect("decode reservation");
+                    assert_eq!(
+                        record.reservation_id,
+                        FixedBytes::<32>::from(*reservation_id)
+                    );
+                    assert_eq!(record.taker, *taker);
+                    assert_eq!(record.desk, *desk);
+                    assert_eq!(record.amount, *amount);
+                    assert_eq!(record.counter, *counter);
+                }
+                Self::HashlockSet {
+                    reservation_id,
+                    hashlock,
+                } => {
+                    let record = decode_hashlock_set(&topics, &data).expect("decode hashlock");
+                    assert_eq!(
+                        record.reservation_id,
+                        FixedBytes::<32>::from(*reservation_id)
+                    );
+                    assert_eq!(record.hashlock, *hashlock);
+                }
+                Self::AtomicReservationCreated {
+                    reservation_id,
+                    desk_id,
+                    taker,
+                    asset,
+                    amount,
+                    settlement_digest,
+                    expiry,
+                    created_at,
+                } => {
+                    let record = decode_atomic_reservation_created(&topics, &data)
+                        .expect("decode atomic reservation");
+                    assert_eq!(
+                        record.reservation_id,
+                        FixedBytes::<32>::from(*reservation_id)
+                    );
+                    assert_eq!(record.desk_id, FixedBytes::<32>::from(*desk_id));
+                    assert_eq!(record.taker, *taker);
+                    assert_eq!(record.asset, *asset);
+                    assert_eq!(record.amount, *amount);
+                    assert_eq!(record.settlement_digest, *settlement_digest);
+                    assert_eq!(record.expiry, *expiry);
+                    assert_eq!(record.created_at, *created_at);
+                }
+                Self::TrancheOpened {
+                    tranche_id,
+                    desk_id,
+                    maker,
+                    asset,
+                    price_numerator,
+                    price_denominator,
+                    total_liquidity,
+                    min_fill,
+                    fee_bps,
+                    fee_payer,
+                    expiry,
+                } => {
+                    let record = decode_tranche_opened(&topics, &data).expect("decode tranche");
+                    assert_eq!(record.tranche_id, FixedBytes::<32>::from(*tranche_id));
+                    assert_eq!(record.desk_id, FixedBytes::<32>::from(*desk_id));
+                    assert_eq!(record.maker, *maker);
+                    assert_eq!(record.asset, *asset);
+                    assert_eq!(record.price_numerator, *price_numerator);
+                    assert_eq!(record.price_denominator, *price_denominator);
+                    assert_eq!(record.total_liquidity, *total_liquidity);
+                    assert_eq!(record.min_fill, *min_fill);
+                    assert_eq!(record.fee_bps, *fee_bps);
+                    assert_eq!(record.fee_payer, *fee_payer);
+                    assert_eq!(record.expiry, *expiry);
+                }
+                Self::TakerTrancheOpened {
+                    tranche_id,
+                    desk_id,
+                    taker,
+                    asset,
+                    price_numerator,
+                    price_denominator,
+                    total_liquidity,
+                    min_fill,
+                    fee_bps,
+                    fee_payer,
+                    expiry,
+                    posting_fee,
+                } => {
+                    let record =
+                        decode_taker_tranche_opened(&topics, &data).expect("decode tranche");
+                    assert_eq!(record.tranche_id, FixedBytes::<32>::from(*tranche_id));
+                    assert_eq!(record.desk_id, FixedBytes::<32>::from(*desk_id));
+                    assert_eq!(record.taker, *taker);
+                    assert_eq!(record.asset, *asset);
+                    assert_eq!(record.price_numerator, *price_numerator);
+                    assert_eq!(record.price_denominator, *price_denominator);
+                    assert_eq!(record.total_liquidity, *total_liquidity);
+                    assert_eq!(record.min_fill, *min_fill);
+                    assert_eq!(record.fee_bps, *fee_bps);
+                    assert_eq!(record.fee_payer, *fee_payer);
+                    assert_eq!(record.expiry, *expiry);
+                    assert_eq!(record.posting_fee, *posting_fee);
+                }
+                Self::TrancheReserved {
+                    tranche_id,
+                    reservation_id,
+                    taker,
+                    amount,
+                    remaining_liquidity,
+                } => {
+                    let record =
+                        decode_tranche_reserved(&topics, &data).expect("decode tranche reserve");
+                    assert_eq!(record.tranche_id, FixedBytes::<32>::from(*tranche_id));
+                    assert_eq!(
+                        record.reservation_id,
+                        FixedBytes::<32>::from(*reservation_id)
+                    );
+                    assert_eq!(record.taker, *taker);
+                    assert_eq!(record.amount, *amount);
+                    assert_eq!(record.remaining_liquidity, *remaining_liquidity);
+                }
+                Self::TakerTrancheReserved {
+                    tranche_id,
+                    reservation_id,
+                    maker,
+                    amount,
+                    remaining_liquidity,
+                } => {
+                    let record = decode_taker_tranche_reserved(&topics, &data)
+                        .expect("decode taker tranche reserve");
+                    assert_eq!(record.tranche_id, FixedBytes::<32>::from(*tranche_id));
+                    assert_eq!(
+                        record.reservation_id,
+                        FixedBytes::<32>::from(*reservation_id)
+                    );
+                    assert_eq!(record.maker, *maker);
+                    assert_eq!(record.amount, *amount);
+                    assert_eq!(record.remaining_liquidity, *remaining_liquidity);
+                }
+                Self::ReservationSettled {
+                    reservation_id,
+                    tau,
+                } => {
+                    let (decoded_id, decoded_tau) =
+                        decode_reservation_settled(&topics, &data).expect("decode settled");
+                    assert_eq!(decoded_id, FixedBytes::<32>::from(*reservation_id));
+                    assert_eq!(decoded_tau, *tau);
+                }
+                Self::ReservationRefunded {
+                    reservation_id,
+                    evidence,
+                } => {
+                    let (decoded_id, decoded_evidence) =
+                        decode_reservation_refunded(&topics, &data).expect("decode refunded");
+                    assert_eq!(decoded_id, FixedBytes::<32>::from(*reservation_id));
+                    assert_eq!(decoded_evidence, *evidence);
+                }
+            }
+        }
+    }
+
+    fn arb_address() -> impl Strategy<Value = Address> {
+        any::<[u8; 20]>().prop_map(|bytes| Address::from_slice(&bytes))
+    }
+
+    fn arb_u256() -> impl Strategy<Value = U256> {
+        any::<u128>().prop_map(U256::from)
+    }
+
+    fn arb_lifecycle_event() -> impl Strategy<Value = GeneratedEvmEvent> {
+        prop_oneof![
+            (
+                any::<[u8; 32]>(),
+                arb_address(),
+                arb_address(),
+                arb_u256(),
+                arb_u256(),
+            )
+                .prop_map(|(reservation_id, taker, desk, amount, counter)| {
+                    GeneratedEvmEvent::ReservationCreated {
+                        reservation_id,
+                        taker,
+                        desk,
+                        amount,
+                        counter,
+                    }
+                }),
+            (any::<[u8; 32]>(), any::<[u8; 32]>()).prop_map(|(reservation_id, hashlock)| {
+                GeneratedEvmEvent::HashlockSet {
+                    reservation_id,
+                    hashlock,
+                }
+            }),
+            (
+                any::<[u8; 32]>(),
+                any::<[u8; 32]>(),
+                arb_address(),
+                arb_address(),
+                arb_u256(),
+                any::<[u8; 32]>(),
+                any::<u64>(),
+                any::<u64>(),
+            )
+                .prop_map(
+                    |(
+                        reservation_id,
+                        desk_id,
+                        taker,
+                        asset,
+                        amount,
+                        settlement_digest,
+                        expiry,
+                        created_at,
+                    )| GeneratedEvmEvent::AtomicReservationCreated {
+                        reservation_id,
+                        desk_id,
+                        taker,
+                        asset,
+                        amount,
+                        settlement_digest,
+                        expiry,
+                        created_at,
+                    }
+                ),
+            (
+                any::<[u8; 32]>(),
+                any::<[u8; 32]>(),
+                arb_address(),
+                arb_address(),
+                arb_u256(),
+                arb_u256(),
+                arb_u256(),
+                arb_u256(),
+                any::<u16>(),
+                any::<u8>(),
+                any::<u64>(),
+            )
+                .prop_map(
+                    |(
+                        tranche_id,
+                        desk_id,
+                        maker,
+                        asset,
+                        price_numerator,
+                        price_denominator,
+                        total_liquidity,
+                        min_fill,
+                        fee_bps,
+                        fee_payer,
+                        expiry,
+                    )| GeneratedEvmEvent::TrancheOpened {
+                        tranche_id,
+                        desk_id,
+                        maker,
+                        asset,
+                        price_numerator,
+                        price_denominator,
+                        total_liquidity,
+                        min_fill,
+                        fee_bps,
+                        fee_payer,
+                        expiry,
+                    }
+                ),
+            (
+                any::<[u8; 32]>(),
+                any::<[u8; 32]>(),
+                arb_address(),
+                arb_address(),
+                arb_u256(),
+                arb_u256(),
+                arb_u256(),
+                arb_u256(),
+                any::<u16>(),
+                any::<u8>(),
+                any::<u64>(),
+                arb_u256(),
+            )
+                .prop_map(
+                    |(
+                        tranche_id,
+                        desk_id,
+                        taker,
+                        asset,
+                        price_numerator,
+                        price_denominator,
+                        total_liquidity,
+                        min_fill,
+                        fee_bps,
+                        fee_payer,
+                        expiry,
+                        posting_fee,
+                    )| GeneratedEvmEvent::TakerTrancheOpened {
+                        tranche_id,
+                        desk_id,
+                        taker,
+                        asset,
+                        price_numerator,
+                        price_denominator,
+                        total_liquidity,
+                        min_fill,
+                        fee_bps,
+                        fee_payer,
+                        expiry,
+                        posting_fee,
+                    }
+                ),
+            (
+                any::<[u8; 32]>(),
+                any::<[u8; 32]>(),
+                arb_address(),
+                arb_u256(),
+                arb_u256(),
+            )
+                .prop_map(
+                    |(tranche_id, reservation_id, taker, amount, remaining_liquidity)| {
+                        GeneratedEvmEvent::TrancheReserved {
+                            tranche_id,
+                            reservation_id,
+                            taker,
+                            amount,
+                            remaining_liquidity,
+                        }
+                    }
+                ),
+            (
+                any::<[u8; 32]>(),
+                any::<[u8; 32]>(),
+                arb_address(),
+                arb_u256(),
+                arb_u256(),
+            )
+                .prop_map(
+                    |(tranche_id, reservation_id, maker, amount, remaining_liquidity)| {
+                        GeneratedEvmEvent::TakerTrancheReserved {
+                            tranche_id,
+                            reservation_id,
+                            maker,
+                            amount,
+                            remaining_liquidity,
+                        }
+                    }
+                ),
+            (any::<[u8; 32]>(), any::<[u8; 32]>()).prop_map(|(reservation_id, tau)| {
+                GeneratedEvmEvent::ReservationSettled {
+                    reservation_id,
+                    tau,
+                }
+            }),
+            (any::<[u8; 32]>(), any::<[u8; 32]>()).prop_map(|(reservation_id, evidence)| {
+                GeneratedEvmEvent::ReservationRefunded {
+                    reservation_id,
+                    evidence,
+                }
+            }),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 96,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property 19: EVM event decoding correctness.
+        #[test]
+        fn property19_evm_event_decoding_correctness(event in arb_lifecycle_event()) {
+            event.assert_decodes();
+        }
+
+        /// Property 20: EVM event decoder rejects invalid inputs.
+        #[test]
+        fn property20_evm_event_decoder_rejects_invalid_inputs(
+            event in arb_lifecycle_event(),
+            unknown_topic in any::<[u8; 32]>(),
+        ) {
+            let (topics, data) = event.encode();
+
+            let mut wrong_topic = topics.clone();
+            wrong_topic[0] = B256::from(unknown_topic);
+            prop_assume!(wrong_topic[0] != topics[0]);
+            let err = event
+                .decode_into_unit(&wrong_topic, &data)
+                .expect_err("unknown topic must fail");
+            prop_assert!(err.to_string().contains("not a"));
+
+            let short_topics = &topics[..topics.len() - 1];
+            let err = event
+                .decode_into_unit(short_topics, &data)
+                .expect_err("insufficient topics must fail");
+            prop_assert!(err.to_string().contains("not a"));
+
+            prop_assume!(!data.is_empty());
+            let truncated = &data[..data.len() - 1];
+            let err = event
+                .decode_into_unit(&topics, truncated)
+                .expect_err("truncated data must fail");
+            prop_assert!(err.to_string().contains("decode"));
+        }
     }
 
     #[test]

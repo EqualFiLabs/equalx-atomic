@@ -30,3 +30,6 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 monero-rpc = { path = "../monero-rpc" }
 watcher = { path = "../watcher" }
 monero-wallet-core = { path = "../monero-wallet-core" }
+
+[dev-dependencies]
+proptest = "1"
