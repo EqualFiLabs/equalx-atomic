@@ -3988,10 +3988,12 @@ dependencies = [
 name = "presig-envelope"
 version = "0.1.0"
 dependencies = [
+ "adaptor-clsag",
  "chacha20poly1305",
  "hex",
  "hkdf",
  "k256",
+ "proptest",
  "rand_core 0.6.4",
  "serde",
  "sha2",
