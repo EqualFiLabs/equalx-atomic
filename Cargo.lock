@@ -3704,6 +3704,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "orchestrator"
+version = "0.0.1"
+dependencies = [
+ "adaptor-clsag",
+ "bincode",
+ "equalx-error",
+ "equalx-sdk",
+ "hex",
+ "host-adapter",
+ "presig-envelope",
+ "serde",
+]
+
+[[package]]
 name = "p256"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
