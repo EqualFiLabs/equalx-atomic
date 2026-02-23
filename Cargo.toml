@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/adaptor-clsag",
     "crates/equalx-sdk",
+    "crates/equalx-error",
+    "crates/host-adapter",
     "crates/cli",
     "crates/ffi-c",
     "crates/ffi-wasm",
