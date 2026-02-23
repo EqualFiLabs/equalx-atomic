@@ -2,7 +2,7 @@ use crate::{
     wire::{ClsagFinalSigContainer, ClsagPreSig},
     EswpError, PreSig,
 };
-use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::{edwards::EdwardsPoint, scalar::Scalar, traits::Identity};
 use monero_oxide::io::CompressedPoint;
 use std::collections::HashSet;
 
@@ -19,6 +19,16 @@ pub fn validate_point_le(bytes: &[u8; 32]) -> Result<(), EswpError> {
         .decompress()
         .map(|_| ())
         .ok_or(EswpError::EncodingNoncanonical)
+}
+
+pub fn validate_non_identity_point_le(bytes: &[u8; 32]) -> Result<(), EswpError> {
+    let point = CompressedPoint::from(*bytes)
+        .decompress()
+        .ok_or(EswpError::EncodingNoncanonical)?;
+    if point == EdwardsPoint::identity() {
+        return Err(EswpError::EncodingNoncanonical);
+    }
+    Ok(())
 }
 
 pub fn ensure_unique_ring(ring: &[[u8; 32]]) -> Result<(), EswpError> {

@@ -67,7 +67,7 @@ pub const SAMPLE_RING_COMMITMENTS: [[u8; 32]; 5] = SAMPLE_RING_KEYS;
 /// Chain-agnostic settlement binding (see §1.2)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SettlementCtx {
-    pub chain_tag: String, // e.g. "evm:84532"
+    pub chain_tag: String,      // e.g. "evm:84532"
     pub position_key: [u8; 32], // Position NFT-derived key (bytes32)
     pub settle_digest: [u8; 32],
 }
@@ -250,6 +250,11 @@ pub fn make_pre_sig(
 ) -> Result<(PreSig, [u8; 32]), EswpError> {
     encoding::validate_scalar_le(&witness.x)?;
     encoding::validate_scalar_le(&witness.mask)?;
+    if Scalar::from_bytes_mod_order(witness.x) == Scalar::ZERO
+        || Scalar::from_bytes_mod_order(witness.mask) == Scalar::ZERO
+    {
+        return Err(EswpError::EncodingNoncanonical);
+    }
     if ctx.ring_keys.len() != ctx.n {
         return Err(EswpError::RingInvalid);
     }
@@ -258,17 +263,17 @@ pub fn make_pre_sig(
     }
     encoding::ensure_unique_ring(&ctx.ring_keys)?;
     for key in &ctx.ring_keys {
-        encoding::validate_point_le(key)?;
+        encoding::validate_non_identity_point_le(key)?;
     }
     if !ctx.ring_commitments.is_empty() {
         if ctx.ring_commitments.len() != ctx.n {
             return Err(EswpError::RingInvalid);
         }
         for commitment in &ctx.ring_commitments {
-            encoding::validate_point_le(commitment)?;
+            encoding::validate_non_identity_point_le(commitment)?;
         }
     }
-    encoding::validate_point_le(&ctx.key_image)?;
+    encoding::validate_non_identity_point_le(&ctx.key_image)?;
 
     let ring_hash = crate::transcript::ring_hash(ctx);
 
