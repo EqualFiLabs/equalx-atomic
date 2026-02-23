@@ -2125,13 +2125,20 @@ dependencies = [
  "alloy-primitives",
  "alloy-signer",
  "alloy-signer-local",
+ "bincode",
  "cbindgen",
+ "equalx-error",
  "equalx-sdk",
  "hex",
+ "host-adapter",
  "libc",
  "monero-oxide 0.1.4-alpha (git+https://github.com/monero-oxide/monero-oxide.git?rev=7c288b058ae7f1e3d36600a2af11b3176102bcfc)",
+ "once_cell",
+ "orchestrator",
+ "proptest",
  "serde",
  "serde_json",
+ "watcher",
 ]
 
 [[package]]

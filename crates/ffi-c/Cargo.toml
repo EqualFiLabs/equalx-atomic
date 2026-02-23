@@ -12,14 +12,21 @@ adaptor-clsag = { path = "../adaptor-clsag" }
 alloy-primitives = "0.8"
 alloy-signer = "0.7"
 alloy-signer-local = "0.7"
+equalx-error = { path = "../equalx-error" }
 equalx-sdk = { path = "../equalx-sdk" }
+host-adapter = { path = "../host-adapter" }
+bincode = "1.3"
 libc = "0.2"
 monero-oxide = { package = "monero-oxide", git = "https://github.com/monero-oxide/monero-oxide.git", rev = "7c288b058ae7f1e3d36600a2af11b3176102bcfc" }
+orchestrator = { path = "../orchestrator" }
+watcher = { path = "../watcher" }
+once_cell = "1.20"
 
 [build-dependencies]
 cbindgen = "0.29"
 
 [dev-dependencies]
 hex = "0.4"
+proptest = "1.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
