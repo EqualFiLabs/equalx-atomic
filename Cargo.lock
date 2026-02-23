@@ -3714,6 +3714,7 @@ dependencies = [
  "hex",
  "host-adapter",
  "presig-envelope",
+ "proptest",
  "serde",
 ]
 
