@@ -29,6 +29,292 @@ class EqualXApi {
   /// CLSAG backend identifier reported by the SDK.
   int backendClsagId() => bindings.backendClsagId();
 
+  /// Returns runtime library capabilities and advertised API groups.
+  CapabilityDescriptor capabilityQuery() {
+    final arena = pkg_ffi.Arena();
+    try {
+      final out = arena.allocate<NativeCapabilityDescriptor>(1);
+      _check(bindings.capabilityQuery(out), 'capability_query');
+      final value = out.ref;
+      return CapabilityDescriptor(
+        versionMajor: value.versionMajor,
+        versionMinor: value.versionMinor,
+        versionPatch: value.versionPatch,
+        backends: value.backends,
+        apiGroups: value.apiGroups,
+        wireVersion: value.wireVersion,
+      );
+    } finally {
+      arena.releaseAll();
+    }
+  }
+
+  /// Registers a compressed secp256k1 encryption pubkey for an owner address.
+  void registerEncPub({
+    required Uint8List ownerAddress,
+    required Uint8List compressedPubkey,
+  }) {
+    _requireLength(ownerAddress, addressLength, 'ownerAddress');
+    _requireLength(compressedPubkey, 33, 'compressedPubkey');
+    final arena = pkg_ffi.Arena();
+    try {
+      final ownerPtr = _bytesToNative(ownerAddress, arena);
+      final keyPtr = _bytesToNative(compressedPubkey, arena);
+      _check(
+        bindings.registerEncPub(ownerPtr, keyPtr, compressedPubkey.length),
+        'register_enc_pub',
+      );
+    } finally {
+      arena.releaseAll();
+    }
+  }
+
+  /// Returns the registered compressed pubkey for an owner.
+  Uint8List getEncPub({required Uint8List ownerAddress}) {
+    _requireLength(ownerAddress, addressLength, 'ownerAddress');
+    final arena = pkg_ffi.Arena();
+    try {
+      final ownerPtr = _bytesToNative(ownerAddress, arena);
+      final outPtrPtr = arena.allocate<ffi.Pointer<ffi.Uint8>>(1);
+      final outLenPtr = arena.allocate<ffi.Uint32>(1);
+      _check(bindings.getEncPub(ownerPtr, outPtrPtr, outLenPtr), 'get_enc_pub');
+      return _consumeOwnedBuffer(outPtrPtr.value, outLenPtr.value);
+    } finally {
+      arena.releaseAll();
+    }
+  }
+
+  /// Returns whether an owner has a key registered.
+  bool isRegistered({required Uint8List ownerAddress}) {
+    _requireLength(ownerAddress, addressLength, 'ownerAddress');
+    final arena = pkg_ffi.Arena();
+    try {
+      final ownerPtr = _bytesToNative(ownerAddress, arena);
+      final outRegistered = arena.allocate<ffi.Uint8>(1);
+      _check(bindings.isRegistered(ownerPtr, outRegistered), 'is_registered');
+      return outRegistered.value != 0;
+    } finally {
+      arena.releaseAll();
+    }
+  }
+
+  /// Publishes an encrypted taker-context envelope to mailbox storage.
+  void publishContext({
+    required Uint8List reservationId,
+    required Uint8List envelope,
+  }) {
+    _publishMailbox(
+      op: bindings.publishContext,
+      context: 'publish_context',
+      reservationId: reservationId,
+      envelope: envelope,
+    );
+  }
+
+  /// Publishes an encrypted presig envelope to mailbox storage.
+  void publishPresig({
+    required Uint8List reservationId,
+    required Uint8List envelope,
+  }) {
+    _publishMailbox(
+      op: bindings.publishPresig,
+      context: 'publish_presig',
+      reservationId: reservationId,
+      envelope: envelope,
+    );
+  }
+
+  /// Publishes an encrypted final-signature envelope to mailbox storage.
+  void publishFinalSig({
+    required Uint8List reservationId,
+    required Uint8List envelope,
+  }) {
+    _publishMailbox(
+      op: bindings.publishFinalSig,
+      context: 'publish_final_sig',
+      reservationId: reservationId,
+      envelope: envelope,
+    );
+  }
+
+  /// Fetches all mailbox messages for a reservation.
+  List<Uint8List> fetchMessages({required Uint8List reservationId}) {
+    _requireLength(reservationId, swapIdLength, 'reservationId');
+    final arena = pkg_ffi.Arena();
+    try {
+      final reservationPtr = _bytesToNative(reservationId, arena);
+      final outPtrPtr = arena.allocate<ffi.Pointer<ffi.Uint8>>(1);
+      final outLenPtr = arena.allocate<ffi.Uint32>(1);
+      _check(
+        bindings.fetchMessages(reservationPtr, outPtrPtr, outLenPtr),
+        'fetch_messages',
+      );
+      final bytes = _consumeOwnedBuffer(outPtrPtr.value, outLenPtr.value);
+      return _decodeMailboxPayload(bytes);
+    } finally {
+      arena.releaseAll();
+    }
+  }
+
+  /// Creates a new orchestrator handle over host-provided callback tables.
+  ffi.Pointer<ffi.Void> orchestratorNew({
+    required ffi.Pointer<ffi.Void> keyCallbacks,
+    required ffi.Pointer<ffi.Void> evmCallbacks,
+    required ffi.Pointer<ffi.Void> moneroCallbacks,
+    required ffi.Pointer<ffi.Void> persistenceCallbacks,
+    required ffi.Pointer<ffi.Void> timeCallbacks,
+    required ffi.Pointer<ffi.Void> uxCallbacks,
+    OrchestratorConfig? config,
+  }) {
+    _requirePointer(keyCallbacks, 'keyCallbacks');
+    _requirePointer(evmCallbacks, 'evmCallbacks');
+    _requirePointer(moneroCallbacks, 'moneroCallbacks');
+    _requirePointer(persistenceCallbacks, 'persistenceCallbacks');
+    _requirePointer(timeCallbacks, 'timeCallbacks');
+    _requirePointer(uxCallbacks, 'uxCallbacks');
+    final arena = pkg_ffi.Arena();
+    try {
+      final outHandle =
+          arena.allocate<ffi.Pointer<NativeFfiOrchestratorHandle>>(1);
+      final cfgPtr = config == null
+          ? ffi.nullptr.cast<NativeOrchestratorConfig>()
+          : arena.allocate<NativeOrchestratorConfig>(1);
+      if (config != null) {
+        cfgPtr.ref.checkpointVersion = config.checkpointVersion;
+        cfgPtr.ref.makerTimeoutSecs = config.makerTimeoutSecs;
+        cfgPtr.ref.takerTimeoutSecs = config.takerTimeoutSecs;
+      }
+      _check(
+        bindings.orchestratorNew(
+          keyCallbacks,
+          evmCallbacks,
+          moneroCallbacks,
+          persistenceCallbacks,
+          timeCallbacks,
+          uxCallbacks,
+          cfgPtr,
+          outHandle,
+        ),
+        'orchestrator_new',
+      );
+      return outHandle.value.cast<ffi.Void>();
+    } finally {
+      arena.releaseAll();
+    }
+  }
+
+  /// Releases an orchestrator handle previously returned by [orchestratorNew].
+  void orchestratorFree(ffi.Pointer<ffi.Void> handle) {
+    _requirePointer(handle, 'handle');
+    bindings.orchestratorFree(handle.cast<NativeFfiOrchestratorHandle>());
+  }
+
+  /// Resumes orchestrator state for a reservation and returns its parsed state.
+  SwapState orchestratorResume({
+    required ffi.Pointer<ffi.Void> handle,
+    required Uint8List reservationId,
+  }) {
+    _requirePointer(handle, 'handle');
+    _requireLength(reservationId, swapIdLength, 'reservationId');
+    final arena = pkg_ffi.Arena();
+    try {
+      final reservationPtr = _bytesToNative(reservationId, arena);
+      final outStatePtr = arena.allocate<ffi.Pointer<ffi.Uint8>>(1);
+      final outStateLen = arena.allocate<ffi.Uint32>(1);
+      _check(
+        bindings.orchestratorResume(
+          handle.cast<NativeFfiOrchestratorHandle>(),
+          reservationPtr,
+          outStatePtr,
+          outStateLen,
+        ),
+        'orchestrator_resume',
+      );
+      final rawBytes =
+          _consumeOwnedBuffer(outStatePtr.value, outStateLen.value);
+      final stateString = String.fromCharCodes(rawBytes);
+      return SwapState.fromDebugString(stateString);
+    } finally {
+      arena.releaseAll();
+    }
+  }
+
+  /// Executes one orchestrator command and returns the optional 32-byte result.
+  Uint8List orchestratorStep({
+    required ffi.Pointer<ffi.Void> handle,
+    required Uint8List reservationId,
+    required int commandId,
+    Uint8List? payload,
+  }) {
+    _requirePointer(handle, 'handle');
+    _requireLength(reservationId, swapIdLength, 'reservationId');
+    if (commandId <= 0) {
+      throw ArgumentError.value(commandId, 'commandId', 'must be > 0');
+    }
+    final payloadBytes = payload ?? Uint8List(0);
+    _validateStepPayload(commandId, payloadBytes);
+    final arena = pkg_ffi.Arena();
+    try {
+      final reservationPtr = _bytesToNative(reservationId, arena);
+      final payloadPtr = _bytesToNative(payloadBytes, arena, allowEmpty: true);
+      final outResult = arena.allocate<ffi.Uint8>(32);
+      _check(
+        bindings.orchestratorStep(
+          handle.cast<NativeFfiOrchestratorHandle>(),
+          reservationPtr,
+          commandId,
+          payloadPtr,
+          payloadBytes.length,
+          outResult,
+        ),
+        'orchestrator_step',
+      );
+      return Uint8List.fromList(outResult.asTypedList(32));
+    } finally {
+      arena.releaseAll();
+    }
+  }
+
+  /// Checks orchestrator deadline expirations.
+  List<SwapLifecycleEvent> orchestratorCheckDeadlines({
+    required ffi.Pointer<ffi.Void> handle,
+    int maxEvents = 16,
+  }) {
+    _requirePointer(handle, 'handle');
+    if (maxEvents <= 0) {
+      throw ArgumentError.value(maxEvents, 'maxEvents', 'must be > 0');
+    }
+    final arena = pkg_ffi.Arena();
+    try {
+      final outEvents = arena.allocate<NativeDeadlineEvent>(maxEvents);
+      final outLen = arena.allocate<ffi.Uint32>(1);
+      _check(
+        bindings.orchestratorCheckDeadlines(
+          handle.cast<NativeFfiOrchestratorHandle>(),
+          outEvents,
+          maxEvents,
+          outLen,
+        ),
+        'orchestrator_check_deadlines',
+      );
+      final count = outLen.value;
+      final events = <SwapLifecycleEvent>[];
+      for (var i = 0; i < count; i++) {
+        final event = (outEvents + i).ref;
+        events.add(
+          SwapLifecycleEvent.deadlineExceeded(
+            reservationId:
+                _arrayToBytes(event.reservationId, length: swapIdLength),
+            deadline: event.deadline,
+          ),
+        );
+      }
+      return events;
+    } finally {
+      arena.releaseAll();
+    }
+  }
+
   /// Generates a Monero spend/view keypair.
   ///
   /// Outputs are caller-owned fresh byte arrays.
@@ -500,7 +786,7 @@ class EqualXApi {
           : arena.allocate<NativeEscrowLog>(logs.length);
       if (logs.isNotEmpty) {
         for (var i = 0; i < logs.length; i++) {
-          final dst = logsPtr.elementAt(i).ref;
+          final dst = (logsPtr + i).ref;
           final entry = logs[i];
           dst.kind = entry.kind;
           dst.backend = entry.backend;
@@ -531,7 +817,7 @@ class EqualXApi {
       final written = writtenPtr.value;
       final events = <EscrowEventDecoded>[];
       for (var i = 0; i < written; i++) {
-        final src = outPtr.elementAt(i).ref;
+        final src = (outPtr + i).ref;
         events.add(
           EscrowEventDecoded(
             kind: src.kind,
@@ -734,6 +1020,69 @@ class EqualXApi {
     }
   }
 
+  void _publishMailbox({
+    required int Function(
+      ffi.Pointer<ffi.Uint8>,
+      ffi.Pointer<ffi.Uint8>,
+      int,
+    ) op,
+    required String context,
+    required Uint8List reservationId,
+    required Uint8List envelope,
+  }) {
+    _requireLength(reservationId, swapIdLength, 'reservationId');
+    if (envelope.isEmpty) {
+      throw ArgumentError('envelope must not be empty');
+    }
+    final arena = pkg_ffi.Arena();
+    try {
+      final reservationPtr = _bytesToNative(reservationId, arena);
+      final envelopePtr = _bytesToNative(envelope, arena);
+      _check(op(reservationPtr, envelopePtr, envelope.length), context);
+    } finally {
+      arena.releaseAll();
+    }
+  }
+
+  List<Uint8List> _decodeMailboxPayload(Uint8List encoded) {
+    if (encoded.length < 4) {
+      throw const FormatException('mailbox payload truncated: missing count');
+    }
+    final data = ByteData.sublistView(encoded);
+    var offset = 0;
+    final count = data.getUint32(offset, Endian.little);
+    offset += 4;
+    final messages = <Uint8List>[];
+    for (var i = 0; i < count; i++) {
+      if (offset + 4 > encoded.length) {
+        throw FormatException('mailbox payload truncated at message length $i');
+      }
+      final messageLen = data.getUint32(offset, Endian.little);
+      offset += 4;
+      if (offset + messageLen > encoded.length) {
+        throw FormatException('mailbox payload truncated at message body $i');
+      }
+      messages.add(
+          Uint8List.fromList(encoded.sublist(offset, offset + messageLen)));
+      offset += messageLen;
+    }
+    if (offset != encoded.length) {
+      throw const FormatException('mailbox payload has trailing bytes');
+    }
+    return messages;
+  }
+
+  Uint8List _consumeOwnedBuffer(ffi.Pointer<ffi.Uint8> ptr, int len) {
+    if (ptr == ffi.nullptr || len == 0) {
+      return Uint8List(0);
+    }
+    try {
+      return Uint8List.fromList(ptr.asTypedList(len));
+    } finally {
+      bindings.freeBuffer(ptr, len);
+    }
+  }
+
   EncodedCall _encodedCallFromPointers(
     ffi.Pointer<ffi.Uint8> dataPtr,
     int dataLen,
@@ -747,7 +1096,72 @@ class EqualXApi {
 
   void _check(int rc, String context) {
     if (rc != 0) {
-      throw EqualXException(rc, context);
+      final message = _lookupErrorMessage(rc);
+      throw EqualXException(rc, '$context: $message');
+    }
+  }
+
+  String _lookupErrorMessage(int rc) {
+    final arena = pkg_ffi.Arena();
+    try {
+      final out = arena.allocate<ffi.Pointer<ffi.Char>>(1);
+      final lookupRc = bindings.errorMessage(rc, out);
+      if (lookupRc != 0 || out.value == ffi.nullptr) {
+        return 'native error code $rc';
+      }
+      final message = out.value.cast<pkg_ffi.Utf8>().toDartString();
+      bindings.freeString(out.value);
+      return message;
+    } catch (_) {
+      return 'native error code $rc';
+    } finally {
+      arena.releaseAll();
+    }
+  }
+
+  void _validateStepPayload(int commandId, Uint8List payload) {
+    if (commandId == eswpCmdMakerCreateReservation) {
+      if (payload.isNotEmpty && payload.length != 8) {
+        throw ArgumentError.value(
+          payload.length,
+          'payload.length',
+          'must be 0 or 8 for maker_create_reservation',
+        );
+      }
+      return;
+    }
+    if (commandId == eswpCmdTakerPublishContext) {
+      if (payload.length < 34) {
+        throw ArgumentError.value(
+          payload.length,
+          'payload.length',
+          'must be >= 34 for taker_publish_context',
+        );
+      }
+      return;
+    }
+    if (commandId == eswpCmdTakerPublishFinalSig) {
+      if (payload.length != 32) {
+        throw ArgumentError.value(
+          payload.length,
+          'payload.length',
+          'must be 32 for taker_publish_final_sig',
+        );
+      }
+      return;
+    }
+    if (payload.isNotEmpty) {
+      throw ArgumentError.value(
+        payload.length,
+        'payload.length',
+        'must be empty for command $commandId',
+      );
+    }
+  }
+
+  void _requirePointer(ffi.Pointer ptr, String name) {
+    if (ptr == ffi.nullptr || ptr.address == 0) {
+      throw ArgumentError.value(ptr.address, name, 'must not be null');
     }
   }
 }

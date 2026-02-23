@@ -22,3 +22,8 @@ EQUALX_FFI_LIB=../target/debug/libffi_c.so flutter test
 
 Set `EQUALX_FFI_LIB` to the compiled shared library before running `flutter
 test` or integrating into an app bundle.
+
+Repeatable mobile artifact scripts are available at:
+
+- `flutter/ffi/tool/build_android.sh` (Android `.so` via NDK/cargo-ndk)
+- `flutter/ffi/tool/build_ios.sh` (iOS `EqualXFFI.xcframework` via Xcode)

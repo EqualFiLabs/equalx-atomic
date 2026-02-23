@@ -25,3 +25,5 @@
 /flutter/.flutter-plugins-dependencies
 /flutter/.packages
 /flutter/build/
+/flutter/ffi/.dart_tool/
+/flutter/ffi/build/

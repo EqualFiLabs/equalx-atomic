@@ -84,7 +84,132 @@ class EscrowEventDecoded {
   final Uint8List amountBigEndian;
 }
 
+class CapabilityDescriptor {
+  const CapabilityDescriptor({
+    required this.versionMajor,
+    required this.versionMinor,
+    required this.versionPatch,
+    required this.backends,
+    required this.apiGroups,
+    required this.wireVersion,
+  });
+
+  final int versionMajor;
+  final int versionMinor;
+  final int versionPatch;
+  final int backends;
+  final int apiGroups;
+  final int wireVersion;
+
+  bool supportsBackend(int mask) => (backends & mask) == mask;
+  bool supportsApiGroup(int mask) => (apiGroups & mask) == mask;
+}
+
+enum SwapRole { maker, taker, unknown }
+
+class SwapState {
+  const SwapState({
+    required this.raw,
+    required this.role,
+    required this.stage,
+  });
+
+  final String raw;
+  final SwapRole role;
+  final String stage;
+
+  factory SwapState.fromDebugString(String debugString) {
+    final trimmed = debugString.trim();
+    final role = trimmed.startsWith('Maker(')
+        ? SwapRole.maker
+        : trimmed.startsWith('Taker(')
+            ? SwapRole.taker
+            : SwapRole.unknown;
+    final stageMatch = RegExp(r'^(?:Maker|Taker)\(([^({]+)')
+        .firstMatch(trimmed)
+        ?.group(1)
+        ?.trim();
+    return SwapState(
+      raw: debugString,
+      role: role,
+      stage: stageMatch ?? trimmed,
+    );
+  }
+}
+
+enum SwapLifecycleEventKind {
+  deadlineExceeded,
+  stateTransition,
+  deadlineWarning,
+  errorOccurred,
+  userActionRequired,
+  txSubmitted,
+  txConfirmed,
+  swapCompleted,
+  unknown,
+}
+
+class SwapLifecycleEvent {
+  const SwapLifecycleEvent({
+    required this.kind,
+    required this.reservationId,
+    this.deadline,
+    this.message,
+    this.raw,
+  });
+
+  final SwapLifecycleEventKind kind;
+  final Uint8List reservationId;
+  final int? deadline;
+  final String? message;
+  final String? raw;
+
+  factory SwapLifecycleEvent.deadlineExceeded({
+    required Uint8List reservationId,
+    required int deadline,
+  }) {
+    return SwapLifecycleEvent(
+      kind: SwapLifecycleEventKind.deadlineExceeded,
+      reservationId: reservationId,
+      deadline: deadline,
+    );
+  }
+}
+
+class OrchestratorConfig {
+  const OrchestratorConfig({
+    this.checkpointVersion = 1,
+    this.makerTimeoutSecs = 3600,
+    this.takerTimeoutSecs = 3600,
+  });
+
+  final int checkpointVersion;
+  final int makerTimeoutSecs;
+  final int takerTimeoutSecs;
+}
+
 const int swapIdLength = 32;
 const int addressLength = 20;
 const int scalarLength = 32;
 const int u256Length = 32;
+
+const int backendMaskClsag = 1 << 0;
+
+const int apiGroupKeyRegistry = 1 << 0;
+const int apiGroupMailbox = 1 << 1;
+const int apiGroupAtomicDesk = 1 << 2;
+const int apiGroupEscrow = 1 << 3;
+const int apiGroupEventDecode = 1 << 4;
+const int apiGroupOrchestrator = 1 << 5;
+
+const int eswpCmdMakerCreateReservation = 1;
+const int eswpCmdMakerSetHashlock = 2;
+const int eswpCmdMakerHandleContext = 3;
+const int eswpCmdMakerPublishPresig = 4;
+const int eswpCmdMakerHandleFinalSig = 5;
+const int eswpCmdMakerSettle = 6;
+const int eswpCmdTakerAcceptReservation = 11;
+const int eswpCmdTakerPublishContext = 12;
+const int eswpCmdTakerHandlePresig = 13;
+const int eswpCmdTakerCompleteAndBroadcast = 14;
+const int eswpCmdTakerPublishFinalSig = 15;
