@@ -98,8 +98,11 @@ impl<T: EvmViewTransport> DeskVaultClient<T> {
 
     /// Canonicalize a pair using the contract's pure function.
     pub fn canonical_pair(&self, token_x: Address, token_y: Address) -> Result<(Address, Address)> {
-        let calldata = DeskVault::canonicalPairCall { tokenX: token_x, tokenY: token_y }
-            .abi_encode();
+        let calldata = DeskVault::canonicalPairCall {
+            tokenX: token_x,
+            tokenY: token_y,
+        }
+        .abi_encode();
         let call = EvmCall::new(self.vault, Bytes::from(calldata), Default::default());
         let raw = self.transport.call_view(call)?;
         let decoded = DeskVault::canonicalPairCall::abi_decode_returns(&raw, true)
@@ -132,8 +135,12 @@ impl<T: EvmViewTransport> DeskVaultClient<T> {
         token_x: Address,
         token_y: Address,
     ) -> Result<DeskBalances> {
-        let calldata =
-            DeskVault::getBalancesCall { maker, tokenX: token_x, tokenY: token_y }.abi_encode();
+        let calldata = DeskVault::getBalancesCall {
+            maker,
+            tokenX: token_x,
+            tokenY: token_y,
+        }
+        .abi_encode();
         let call = EvmCall::new(self.vault, Bytes::from(calldata), Default::default());
         let raw = self.transport.call_view(call)?;
         let decoded = DeskVault::getBalancesCall::abi_decode_returns(&raw, true)
@@ -141,7 +148,10 @@ impl<T: EvmViewTransport> DeskVaultClient<T> {
         Ok(decoded._0.into())
     }
 
-    pub fn get_desk_balances(&self, desk_id: FixedBytes<32>) -> Result<(DeskBalances, DeskMakerFees)> {
+    pub fn get_desk_balances(
+        &self,
+        desk_id: FixedBytes<32>,
+    ) -> Result<(DeskBalances, DeskMakerFees)> {
         let calldata = DeskVault::getDeskBalancesCall { deskId: desk_id }.abi_encode();
         let call = EvmCall::new(self.vault, Bytes::from(calldata), Default::default());
         let raw = self.transport.call_view(call)?;

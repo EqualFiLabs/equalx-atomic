@@ -23,15 +23,15 @@ pub use automation::{
     auto_refund, await_settle, trigger_settlement, AutoRefundConfig, SettlementOutcome,
     SettlementTarget,
 };
+pub use chain::{
+    ChainEnvelopeArgs, KeyRegistryApi, MailboxApi, ReservationStatus as ChainReservationStatus,
+    ReservationView, SettlementEscrowApi,
+};
 pub use contracts::{
     AtomicDeskClient, AtomicReservation, AtomicTakerTranche, AtomicTranche, AuctionHouseClient,
     CurveDescriptor, CurveFill, CurveUpdateParams, CurveView, DeskBalances, DeskMakerFees,
     DeskVaultClient, MailboxClient, PublishEnvelopeArgs, SettlementEscrowClient,
     SettlementReservation, StoredCurve, TxHash,
-};
-pub use chain::{
-    ChainEnvelopeArgs, KeyRegistryApi, MailboxApi, ReservationStatus as ChainReservationStatus,
-    ReservationView, SettlementEscrowApi,
 };
 pub use error::{ErrorCode, Result};
 pub use escrow::{
@@ -64,7 +64,9 @@ mod tests {
     };
     use crate::escrow::backend_to_byte;
     use adaptor_clsag::{ClsagCtx, SignerWitness, SAMPLE_RING_KEYS};
-    use alloy_primitives::{keccak256, Address as AlloyAddress, Bytes, FixedBytes, B256, U256, Uint};
+    use alloy_primitives::{
+        keccak256, Address as AlloyAddress, Bytes, FixedBytes, Uint, B256, U256,
+    };
     use alloy_sol_types::{SolCall, SolValue};
     use hex::decode as hex_decode;
     use std::collections::VecDeque;
@@ -691,7 +693,11 @@ mod tests {
             .settle(FixedBytes::<32>::from([0x06u8; 32]), tau, Some(450_000))
             .expect("custom gas settle");
         client
-            .refund(FixedBytes::<32>::from([0x07u8; 32]), [0x11; 32], Some(350_000))
+            .refund(
+                FixedBytes::<32>::from([0x07u8; 32]),
+                [0x11; 32],
+                Some(350_000),
+            )
             .expect("refund call");
 
         let calls = transport.calls.lock().unwrap();

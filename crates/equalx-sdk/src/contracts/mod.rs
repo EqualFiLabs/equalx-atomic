@@ -1,9 +1,9 @@
+pub mod atomic_desk;
 pub mod auction_house;
 pub mod common;
 pub mod curves;
 pub mod desk_vault;
 pub mod mailbox;
-pub mod atomic_desk;
 pub mod router;
 pub mod settlement_escrow;
 

@@ -424,7 +424,9 @@ fn decode_final_bytes(bytes: &[u8], decoys: usize) -> Result<DecodedFinal, FfiEr
 }
 
 fn ctx_equal(a: &SettlementCtx, b: &SettlementCtx) -> bool {
-    a.chain_tag == b.chain_tag && a.position_key == b.position_key && a.settle_digest == b.settle_digest
+    a.chain_tag == b.chain_tag
+        && a.position_key == b.position_key
+        && a.settle_digest == b.settle_digest
 }
 
 unsafe fn read_bytes<'a>(ptr: *const c_uchar, len: usize) -> Result<&'a [u8], FfiError> {

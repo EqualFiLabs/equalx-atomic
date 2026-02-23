@@ -381,8 +381,7 @@ fn presig_deterministic_with_fixtures() {
 
     // Fixed settlement fields
     let chain_tag = "ACX-TEST";
-    let position_key_hex =
-        "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd"; // 32 bytes (64 hex chars)
+    let position_key_hex = "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd"; // 32 bytes (64 hex chars)
     let settle_digest_hex = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"; // 32 bytes (64 hex chars)
     let swap_id_hex = "abababababababababababababababababababababababababababababababab"; // 32 bytes (64 hex chars)
     let message_hex = "00";

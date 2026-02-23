@@ -10,8 +10,8 @@ use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockNumberOrTag, Filter, Log};
 use alloy_sol_types::{sol, SolValue};
 use anyhow::{anyhow, Context, Result};
-use equalx_sdk::{AlloyHttpTransport, KeyRegistryClient, MailboxClient, PublishEnvelopeArgs};
 use clap::{ArgGroup, Args, Subcommand, ValueEnum, ValueHint};
+use equalx_sdk::{AlloyHttpTransport, KeyRegistryClient, MailboxClient, PublishEnvelopeArgs};
 use hex;
 use presig_envelope::{
     decrypt_presig, encrypt_presig, DecryptRequest, EncryptRequest, Envelope, EnvelopeContext,
@@ -378,7 +378,10 @@ fn handle_publish_presig(opts: PublishArgs) -> Result<()> {
 
     let reservation_id = parse_swap_id(&opts.context.swap_id, "reservation_id")?;
     if opts.no_broadcast {
-        println!("reservationId={}", format_swap_id(reservation_id.as_slice()));
+        println!(
+            "reservationId={}",
+            format_swap_id(reservation_id.as_slice())
+        );
         println!("envelope={}", format_hex(&envelope_bytes));
         return Ok(());
     }
@@ -438,7 +441,10 @@ fn handle_txproof(opts: TxProofArgs) -> Result<()> {
 
     let rpc = resolve_rpc_url(opts.rpc_url.clone());
     if opts.dry_run || opts.no_broadcast {
-        println!("reservationId={}", format_swap_id(reservation_id.as_slice()));
+        println!(
+            "reservationId={}",
+            format_swap_id(reservation_id.as_slice())
+        );
         println!("moneroTxId=0x{}", hex::encode(monero_tx));
         println!("extra=0x{}", hex::encode(&plaintext.extra));
         println!("envelope={}", format_hex(&envelope_bytes));
@@ -467,7 +473,10 @@ fn handle_decrypt_txproof(opts: DecryptTxProofArgs) -> Result<()> {
     let rpc = resolve_rpc_url(opts.rpc_url.clone());
 
     if opts.dry_run {
-        println!("reservationId={}", format_swap_id(reservation_id.as_slice()));
+        println!(
+            "reservationId={}",
+            format_swap_id(reservation_id.as_slice())
+        );
         println!("rpc={rpc}");
         return Ok(());
     }
@@ -488,7 +497,10 @@ fn handle_decrypt_txproof(opts: DecryptTxProofArgs) -> Result<()> {
     .context("decrypt TxProof envelope")?;
     let proof = TxProofEnvelope::abi_decode(&decrypted.plaintext, true)
         .context("decode TxProof payload")?;
-    println!("reservationId={}", format_swap_id(reservation_id.as_slice()));
+    println!(
+        "reservationId={}",
+        format_swap_id(reservation_id.as_slice())
+    );
     println!("moneroTxId=0x{}", hex::encode(proof.moneroTxId.as_slice()));
     println!("extra=0x{}", hex::encode(&proof.extra));
     Ok(())

@@ -461,7 +461,10 @@ impl<T: EvmTransport + EvmViewTransport> AtomicDeskClient<T> {
     }
 
     pub fn get_tranche(&self, tranche_id: FixedBytes<32>) -> Result<AtomicTranche> {
-        let calldata = AtomicDesk::getTrancheCall { trancheId: tranche_id }.abi_encode();
+        let calldata = AtomicDesk::getTrancheCall {
+            trancheId: tranche_id,
+        }
+        .abi_encode();
         let call = EvmCall::new(self.desk, Bytes::from(calldata), Default::default());
         let raw = self.transport.call_view(call)?;
         let decoded = AtomicDesk::getTrancheCall::abi_decode_returns(&raw, true)
@@ -470,7 +473,10 @@ impl<T: EvmTransport + EvmViewTransport> AtomicDeskClient<T> {
     }
 
     pub fn get_taker_tranche(&self, tranche_id: FixedBytes<32>) -> Result<AtomicTakerTranche> {
-        let calldata = AtomicDesk::getTakerTrancheCall { trancheId: tranche_id }.abi_encode();
+        let calldata = AtomicDesk::getTakerTrancheCall {
+            trancheId: tranche_id,
+        }
+        .abi_encode();
         let call = EvmCall::new(self.desk, Bytes::from(calldata), Default::default());
         let raw = self.transport.call_view(call)?;
         let decoded = AtomicDesk::getTakerTrancheCall::abi_decode_returns(&raw, true)
@@ -478,7 +484,10 @@ impl<T: EvmTransport + EvmViewTransport> AtomicDeskClient<T> {
         Ok(decoded._0.into())
     }
 
-    pub fn get_reservation_tranche(&self, reservation_id: FixedBytes<32>) -> Result<FixedBytes<32>> {
+    pub fn get_reservation_tranche(
+        &self,
+        reservation_id: FixedBytes<32>,
+    ) -> Result<FixedBytes<32>> {
         let calldata = AtomicDesk::getReservationTrancheCall {
             reservationId: reservation_id,
         }

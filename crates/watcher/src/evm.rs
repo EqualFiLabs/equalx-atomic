@@ -363,10 +363,7 @@ mod tests {
             encode_address_topic(taker),
             encode_address_topic(desk),
         ];
-        let data = SolValue::abi_encode(&ReservationCreatedData {
-            amount,
-            counter,
-        });
+        let data = SolValue::abi_encode(&ReservationCreatedData { amount, counter });
 
         let record = decode_reservation_created(&topics, &data).expect("decode reservation");
         assert_eq!(record.reservation_id, reservation_id);

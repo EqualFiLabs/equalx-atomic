@@ -50,8 +50,7 @@ impl SettlementCtx {
 
     /// Returns canonical bytes used in transcript binding.
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        let mut bytes =
-            Vec::with_capacity(2 + self.chain_tag.len() + self.position_key.len() + 32);
+        let mut bytes = Vec::with_capacity(2 + self.chain_tag.len() + self.position_key.len() + 32);
         bytes.extend_from_slice(self.chain_tag.as_bytes());
         bytes.push(0);
         bytes.push(self.position_key.len() as u8);

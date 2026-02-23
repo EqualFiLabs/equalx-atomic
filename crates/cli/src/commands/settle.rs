@@ -2,11 +2,11 @@ use std::{fs, path::PathBuf};
 
 use adaptor_clsag::{PreSig, SettlementCtx as AdaptorSettlementCtx};
 use anyhow::{anyhow, ensure, Context, Result};
+use clap::{Args, ValueEnum};
 use equalx_sdk::{
     await_settle, trigger_settlement, AlloyHttpTransport, EscrowClient, SettleArgs,
     SettlementOutcome, SettlementTarget,
 };
-use clap::{Args, ValueEnum};
 use monero_rpc::MoneroRpc;
 use serde::Deserialize;
 use watcher::monero::{SpendState, TauEvent, WatchTarget};
@@ -310,7 +310,8 @@ impl PresigArtifact {
     }
 
     fn settlement_ctx(&self) -> Result<AdaptorSettlementCtx> {
-        let position_key = parse_hex_array::<32>(&self.settlement_ctx.position_key, "position_key")?;
+        let position_key =
+            parse_hex_array::<32>(&self.settlement_ctx.position_key, "position_key")?;
         Ok(AdaptorSettlementCtx {
             chain_tag: self.settlement_ctx.chain_tag.clone(),
             position_key,

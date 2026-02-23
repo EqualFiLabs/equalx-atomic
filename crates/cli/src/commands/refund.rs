@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use equalx_sdk::{auto_refund, AlloyHttpTransport, AutoRefundConfig, EscrowClient};
 use clap::Args;
+use equalx_sdk::{auto_refund, AlloyHttpTransport, AutoRefundConfig, EscrowClient};
 use hex;
 
 use super::common::{format_tx_hash, parse_address, parse_hex_array, DryRunTransport};

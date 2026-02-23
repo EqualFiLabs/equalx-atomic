@@ -58,9 +58,18 @@ pub trait MailboxApi {
     type TxHash;
 
     fn register_pubkey(&self, pubkey: &[u8; 33], gas_limit: Option<u64>) -> Result<Self::TxHash>;
-    fn publish_context(&self, args: ChainEnvelopeArgs<'_, Self::ReservationId>) -> Result<Self::TxHash>;
-    fn publish_presig(&self, args: ChainEnvelopeArgs<'_, Self::ReservationId>) -> Result<Self::TxHash>;
-    fn publish_final_sig(&self, args: ChainEnvelopeArgs<'_, Self::ReservationId>) -> Result<Self::TxHash>;
+    fn publish_context(
+        &self,
+        args: ChainEnvelopeArgs<'_, Self::ReservationId>,
+    ) -> Result<Self::TxHash>;
+    fn publish_presig(
+        &self,
+        args: ChainEnvelopeArgs<'_, Self::ReservationId>,
+    ) -> Result<Self::TxHash>;
+    fn publish_final_sig(
+        &self,
+        args: ChainEnvelopeArgs<'_, Self::ReservationId>,
+    ) -> Result<Self::TxHash>;
     fn fetch(&self, reservation_id: Self::ReservationId) -> Result<Vec<Vec<u8>>>;
     fn desk_pubkey(&self, desk: Self::Address) -> Result<Vec<u8>>;
 }
@@ -108,9 +117,7 @@ impl From<crate::contracts::settlement_escrow::ReservationStatus> for Reservatio
     }
 }
 
-impl From<SettlementReservation>
-    for ReservationView<FixedBytes<32>, Address, U256>
-{
+impl From<SettlementReservation> for ReservationView<FixedBytes<32>, Address, U256> {
     fn from(value: SettlementReservation) -> Self {
         Self {
             reservation_id: value.reservation_id,
