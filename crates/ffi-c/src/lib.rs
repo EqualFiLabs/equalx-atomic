@@ -3127,6 +3127,7 @@ pub unsafe extern "C" fn eswp_escrow_settle_call(
     escrow_ptr: *const c_uchar,
     swap_id_ptr: *const c_uchar,
     adaptor_secret_ptr: *const c_uchar,
+    min_received_be_ptr: *const c_uchar,
     gas_limit: u64,
     out_data_ptr: *mut c_uchar,
     out_data_capacity: c_uint,
@@ -3134,7 +3135,11 @@ pub unsafe extern "C" fn eswp_escrow_settle_call(
     out_value_ptr: *mut c_uchar,
     out_gas_limit: *mut u64,
 ) -> c_int {
-    if escrow_ptr.is_null() || swap_id_ptr.is_null() || adaptor_secret_ptr.is_null() {
+    if escrow_ptr.is_null()
+        || swap_id_ptr.is_null()
+        || adaptor_secret_ptr.is_null()
+        || min_received_be_ptr.is_null()
+    {
         return FfiError::NullPointer.code();
     }
     let escrow = match read_address(escrow_ptr) {
@@ -3149,9 +3154,14 @@ pub unsafe extern "C" fn eswp_escrow_settle_call(
         Ok(bytes) => bytes,
         Err(err) => return err.code(),
     };
+    let min_received = match read_fixed::<32>(min_received_be_ptr) {
+        Ok(bytes) => u256_from_be(&bytes),
+        Err(err) => return err.code(),
+    };
     let args = SettleArgs {
         swap_id,
         adaptor_secret,
+        min_received,
         gas_limit: gas_option(gas_limit),
     };
     let call = match capture_escrow_call(escrow, move |client| client.settle(args)) {

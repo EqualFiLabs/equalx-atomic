@@ -501,6 +501,7 @@ typedef _SettleCallNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Uint8>,
   ffi.Pointer<ffi.Uint8>,
   ffi.Pointer<ffi.Uint8>,
+  ffi.Pointer<ffi.Uint8>,
   ffi.Uint64,
   ffi.Pointer<ffi.Uint8>,
   ffi.Uint32,
@@ -509,6 +510,7 @@ typedef _SettleCallNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Uint64>,
 );
 typedef _SettleCallDart = int Function(
+  ffi.Pointer<ffi.Uint8>,
   ffi.Pointer<ffi.Uint8>,
   ffi.Pointer<ffi.Uint8>,
   ffi.Pointer<ffi.Uint8>,

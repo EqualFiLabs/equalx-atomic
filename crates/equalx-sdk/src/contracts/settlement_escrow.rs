@@ -54,7 +54,7 @@ sol! {
         event HashlockSet(bytes32 reservationId, bytes32 hashlock);
 
         function setHashlock(bytes32 reservationId, bytes32 hashlock);
-        function settle(bytes32 reservationId, bytes32 tau);
+        function settle(bytes32 reservationId, bytes32 tau, uint256 minReceived);
         function refund(bytes32 reservationId, bytes32 noSpendEvidence);
         function getReservation(bytes32 reservationId) view returns (Reservation);
         function refundSafetyWindow() view returns (uint64);
@@ -163,6 +163,7 @@ impl<T: EvmTransport + EvmViewTransport> SettlementEscrowClient<T> {
         &self,
         reservation_id: FixedBytes<32>,
         tau: [u8; 32],
+        min_received: U256,
         gas_limit: Option<u64>,
     ) -> Result<TxHash> {
         if tau == [0u8; 32] {
@@ -171,6 +172,7 @@ impl<T: EvmTransport + EvmViewTransport> SettlementEscrowClient<T> {
         let calldata = SettlementEscrow::settleCall {
             reservationId: reservation_id,
             tau: FixedBytes::<32>::from_slice(&tau),
+            minReceived: min_received,
         }
         .abi_encode();
         let call = EvmCall::new(self.escrow, Bytes::from(calldata), Default::default())

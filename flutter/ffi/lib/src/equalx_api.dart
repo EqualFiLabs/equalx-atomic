@@ -896,12 +896,14 @@ class EqualXApi {
     required Uint8List escrowAddress,
     required Uint8List swapId,
     required Uint8List adaptorSecret,
+    required Uint8List minReceivedBigEndian,
     int? gasLimit,
     int dataCapacity = 256,
   }) {
     _requireLength(escrowAddress, addressLength, 'escrowAddress');
     _requireLength(swapId, swapIdLength, 'swapId');
     _requireLength(adaptorSecret, scalarLength, 'adaptorSecret');
+    _requireLength(minReceivedBigEndian, u256Length, 'minReceivedBigEndian');
     if (dataCapacity <= 0) {
       throw ArgumentError.value(dataCapacity, 'dataCapacity', 'must be > 0');
     }
@@ -910,6 +912,7 @@ class EqualXApi {
       final escrowPtr = _bytesToNative(escrowAddress, arena);
       final swapPtr = _bytesToNative(swapId, arena);
       final secretPtr = _bytesToNative(adaptorSecret, arena);
+      final minReceivedPtr = _bytesToNative(minReceivedBigEndian, arena);
       final outPtr = arena.allocate<ffi.Uint8>(dataCapacity);
       final outLenPtr = arena.allocate<ffi.Uint32>(1);
       final valuePtr = arena.allocate<ffi.Uint8>(u256Length);
@@ -919,6 +922,7 @@ class EqualXApi {
           escrowPtr,
           swapPtr,
           secretPtr,
+          minReceivedPtr,
           gasLimit ?? 0,
           outPtr,
           dataCapacity,

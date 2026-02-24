@@ -41,7 +41,7 @@ sol! {
             bytes permit
         ) payable returns (bytes32);
 
-        function settle(bytes32 swapId, bytes32 adaptorSecret);
+        function settle(bytes32 swapId, bytes32 adaptorSecret, uint256 minReceived);
         function refund(bytes32 swapId);
     }
 }
@@ -114,6 +114,7 @@ impl<T: EvmTransport> EscrowClient<T> {
         let calldata = Escrow::settleCall {
             swapId: FixedBytes::<32>::from_slice(&args.swap_id),
             adaptorSecret: FixedBytes::<32>::from_slice(&args.adaptor_secret),
+            minReceived: args.min_received,
         }
         .abi_encode();
         let call = EvmCall::new(self.escrow, Bytes::from(calldata), U256::ZERO)
@@ -169,6 +170,7 @@ pub struct LockErc20Args {
 pub struct SettleArgs {
     pub swap_id: [u8; 32],
     pub adaptor_secret: [u8; 32],
+    pub min_received: U256,
     pub gas_limit: Option<u64>,
 }
 

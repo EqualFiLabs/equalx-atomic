@@ -69,6 +69,7 @@ mod tests {
         settlement_escrow::SettlementEscrow as SettlementEscrowBindings,
     };
     use crate::escrow::backend_to_byte;
+    use crate::escrow::Escrow as EscrowBindings;
     use adaptor_clsag::{ClsagCtx, SignerWitness, SAMPLE_RING_KEYS};
     use alloy_primitives::{
         keccak256, Address as AlloyAddress, Bytes, FixedBytes, Uint, B256, U256,
@@ -440,6 +441,7 @@ mod tests {
             .settle(SettleArgs {
                 swap_id: sample_swap_id(),
                 adaptor_secret: [0x55; 32],
+                min_received: U256::from(42u64),
                 gas_limit: Some(200_000),
             })
             .expect("settle");
@@ -456,6 +458,9 @@ mod tests {
         assert_eq!(calls[1].value, U256::from(50u64));
         assert_eq!(calls[2].value, U256::ZERO);
         assert_eq!(calls[3].value, U256::ZERO);
+        let settle_call = EscrowBindings::settleCall::abi_decode(&calls[2].data, true)
+            .expect("decode settle calldata");
+        assert_eq!(settle_call.minReceived, U256::from(42u64));
 
         let logs = vec![
             EscrowLog::locked(sample_swap_id(), U256::from(1_000u64), Backend::Clsag),
@@ -693,10 +698,15 @@ mod tests {
         let reservation_id = FixedBytes::<32>::from([0x05u8; 32]);
         let tau = [0x44u8; 32];
         client
-            .settle(reservation_id, tau, None)
+            .settle(reservation_id, tau, U256::from(1u64), None)
             .expect("default gas settle");
         client
-            .settle(FixedBytes::<32>::from([0x06u8; 32]), tau, Some(450_000))
+            .settle(
+                FixedBytes::<32>::from([0x06u8; 32]),
+                tau,
+                U256::from(2u64),
+                Some(450_000),
+            )
             .expect("custom gas settle");
         client
             .refund(
@@ -713,6 +723,9 @@ mod tests {
         assert_eq!(calls[2].gas_limit, Some(350_000));
         assert_eq!(calls[0].value, U256::ZERO);
         assert_eq!(calls[2].to, escrow_addr);
+        let settle_call = SettlementEscrowBindings::settleCall::abi_decode(&calls[0].data, true)
+            .expect("decode settle calldata");
+        assert_eq!(settle_call.minReceived, U256::from(1u64));
 
         let reservation_wire = SettlementEscrowBindings::Reservation {
             reservationId: FixedBytes::<32>::from([0x7Bu8; 32]),
@@ -762,7 +775,12 @@ mod tests {
         let transport = MockTransport::default();
         let client = SettlementEscrowClient::new(AlloyAddress::repeat_byte(0x70), transport);
         let err = client
-            .settle(FixedBytes::<32>::from([0x01u8; 32]), [0u8; 32], None)
+            .settle(
+                FixedBytes::<32>::from([0x01u8; 32]),
+                [0u8; 32],
+                U256::from(1u64),
+                None,
+            )
             .expect_err("zero tau should fail");
         assert_eq!(err, ErrorCode::SettlementDigestMismatch);
     }

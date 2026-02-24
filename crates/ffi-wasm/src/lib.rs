@@ -910,14 +910,17 @@ pub fn eswp_escrow_settle_call_js(
     escrow: &[u8],
     swap_id: &[u8],
     adaptor_secret: &[u8],
+    min_received_be: &[u8],
     gas_limit: Option<u64>,
 ) -> Result<JsValue, JsValue> {
     let escrow_addr = read_address(escrow)?;
     let swap_id = to_array::<32>(swap_id, "swap_id")?;
     let adaptor_secret = to_array::<32>(adaptor_secret, "adaptor_secret")?;
+    let min_received = u256_from_be(min_received_be)?;
     let args = SettleArgs {
         swap_id,
         adaptor_secret,
+        min_received,
         gas_limit: gas_option(gas_limit),
     };
     let call = capture_escrow_call(escrow_addr, move |client| client.settle(args))?;

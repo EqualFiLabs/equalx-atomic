@@ -91,6 +91,7 @@ pub trait SettlementEscrowApi {
         &self,
         reservation_id: Self::ReservationId,
         tau: [u8; 32],
+        min_received: Self::Amount,
         gas_limit: Option<u64>,
     ) -> Result<Self::TxHash>;
     fn refund(
@@ -239,9 +240,10 @@ where
         &self,
         reservation_id: Self::ReservationId,
         tau: [u8; 32],
+        min_received: Self::Amount,
         gas_limit: Option<u64>,
     ) -> Result<Self::TxHash> {
-        SettlementEscrowClient::settle(self, reservation_id, tau, gas_limit)
+        SettlementEscrowClient::settle(self, reservation_id, tau, min_received, gas_limit)
     }
 
     fn refund(

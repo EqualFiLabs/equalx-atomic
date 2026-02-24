@@ -7,7 +7,7 @@ exec > >(tee -a "$LOG")
 exec 2> >(tee -a "$LOG" >&2)
 set -x
 
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 export MONERO_RPC="${MONERO_RPC:-http://127.0.0.1:58081}"
@@ -193,6 +193,7 @@ MAX_UINT="0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 BASE_DEPOSIT_AMOUNT="${BASE_DEPOSIT_AMOUNT:-600000000000000000000}"
 QUOTE_DEPOSIT_AMOUNT="${QUOTE_DEPOSIT_AMOUNT:-600000000}"
 RESERVE_AMOUNT="${RESERVE_AMOUNT:-50000000000000000000}"
+MIN_RECEIVED_WEI="${MIN_RECEIVED_WEI:-$RESERVE_AMOUNT}"
 
 approve_token "$BASE_TOKEN" "$MAKER_KEY" "$DIAMOND" "$MAX_UINT"
 approve_token "$QUOTE_TOKEN" "$MAKER_KEY" "$DIAMOND" "$MAX_UINT"
@@ -237,7 +238,7 @@ print('0x' + prefix + x)
 PY
 )"
 
-CARGO_MANIFEST="$REPO_ROOT/atomic/Cargo.toml"
+CARGO_MANIFEST="$REPO_ROOT/Cargo.toml"
 
 cargo run --manifest-path "$CARGO_MANIFEST" -p eswp-cli -- atomic-desk register-key \
   --registry "$KEY_REGISTRY_ADDR" \
@@ -504,6 +505,6 @@ if [ -z "$DECRYPTED_MONERO_TX_ID" ] || [ "${DECRYPTED_MONERO_TX_ID,,}" != "${MON
   exit 1
 fi
 
-cast_send "$MAKER_KEY" "$DIAMOND" "settle(bytes32,bytes32)" "$RESERVATION_ID" "$TAU_SECRET"
+cast_send "$MAKER_KEY" "$DIAMOND" "settle(bytes32,bytes32,uint256)" "$RESERVATION_ID" "$TAU_SECRET" "$MIN_RECEIVED_WEI"
 
 echo "=== Local testing run completed $(date -u '+%Y-%m-%dT%H:%M:%SZ') ==="

@@ -1,6 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use adaptor_clsag::{PreSig, SettlementCtx as AdaptorSettlementCtx};
+use alloy_primitives::U256;
 use anyhow::{anyhow, ensure, Context, Result};
 use clap::{Args, ValueEnum};
 use equalx_sdk::{
@@ -25,6 +26,10 @@ pub struct SettleLocalArgs {
     /// Swap identifier hex (32 bytes).
     #[arg(long)]
     pub swap_id: Option<String>,
+
+    /// Minimum amount expected from settle() (wei, decimal or 0x-prefixed hex).
+    #[arg(long)]
+    pub min_received: Option<String>,
 
     /// Finalized Monero tx hash that spent the watched input.
     #[arg(long)]
@@ -105,13 +110,22 @@ fn run_live(args: SettleLocalArgs) -> Result<()> {
         .as_ref()
         .context("--swap-id is required unless --fixture is used")?;
     let swap_id = parse_hex_array::<32>(swap_id_hex, "swap_id")?;
+    let min_received_raw = args
+        .min_received
+        .as_ref()
+        .context("--min-received is required unless --fixture is used")?;
+    let min_received = parse_u256(min_received_raw, "min_received")?;
 
     let artifact = PresigArtifact::load(presig_path)?;
     let pre_sig = artifact.build_pre_sig()?;
     let key_image = artifact.key_image_bytes()?;
     let input_index = args.input_index.unwrap_or(artifact.input_index);
     let watch = WatchTarget::new(key_image, tx_hash, input_index, pre_sig);
-    let target = SettlementTarget { swap_id, watch };
+    let target = SettlementTarget {
+        swap_id,
+        min_received,
+        watch,
+    };
 
     let rpc_url = args
         .monero_rpc
@@ -216,6 +230,7 @@ fn run_fixture(path: &PathBuf) -> Result<()> {
     let tx_hash = escrow.settle(SettleArgs {
         swap_id,
         adaptor_secret: tau,
+        min_received: parse_u256(&fixture.min_received, "fixture.min_received")?,
         gas_limit: None,
     })?;
     let outcome = SettlementOutcome { event, tx_hash };
@@ -273,6 +288,7 @@ struct SettlementCtxSection {
 #[derive(Debug, Deserialize)]
 struct FixtureSection {
     swap_id: String,
+    min_received: String,
     tau: String,
     tx_hash: String,
     escrow: String,
@@ -282,6 +298,18 @@ struct FixtureSection {
 
 fn default_spend_state() -> String {
     "confirmed".into()
+}
+
+fn parse_u256(value: &str, label: &str) -> Result<U256> {
+    let trimmed = value.trim();
+    if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
+        let raw = parse_hex_vec(trimmed, label)?;
+        ensure!(raw.len() <= 32, "{label} hex value exceeds 32 bytes");
+        return Ok(U256::from_be_slice(&raw));
+    }
+    trimmed
+        .parse::<U256>()
+        .map_err(|e| anyhow!("parse {label}: {e}"))
 }
 
 impl PresigArtifact {

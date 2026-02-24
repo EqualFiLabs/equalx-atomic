@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use alloy_primitives::U256;
 use log::info;
 use monero_rpc::MoneroRpc;
 use watcher::monero::{MoneroWatcher, TauEvent, WatchTarget};
@@ -19,6 +20,7 @@ use crate::{
 #[derive(Clone)]
 pub struct SettlementTarget {
     pub swap_id: [u8; 32],
+    pub min_received: U256,
     pub watch: WatchTarget,
 }
 
@@ -90,14 +92,29 @@ pub fn auto_refund<E: EvmTransport>(
 }
 
 struct BindingMap {
-    by_key_image: HashMap<[u8; 32], [u8; 32]>,
+    by_key_image: HashMap<[u8; 32], SettlementTargetBinding>,
+}
+
+#[derive(Clone, Copy)]
+struct SettlementTargetBinding {
+    swap_id: [u8; 32],
+    min_received: U256,
 }
 
 impl BindingMap {
     fn new(targets: &[SettlementTarget]) -> Result<Self> {
         let mut map = HashMap::new();
         for target in targets {
-            if map.insert(target.watch.key_image, target.swap_id).is_some() {
+            if map
+                .insert(
+                    target.watch.key_image,
+                    SettlementTargetBinding {
+                        swap_id: target.swap_id,
+                        min_received: target.min_received,
+                    },
+                )
+                .is_some()
+            {
                 return Err(ErrorCode::BridgeTransportMonero);
             }
         }
@@ -107,7 +124,7 @@ impl BindingMap {
         Ok(Self { by_key_image: map })
     }
 
-    fn lookup(&self, key_image: &[u8; 32]) -> Result<[u8; 32]> {
+    fn lookup(&self, key_image: &[u8; 32]) -> Result<SettlementTargetBinding> {
         self.by_key_image
             .get(key_image)
             .copied()
@@ -120,10 +137,11 @@ fn settle_with_event<E: EvmTransport>(
     bindings: &BindingMap,
     escrow: &EscrowClient<E>,
 ) -> Result<SettlementOutcome> {
-    let swap_id = bindings.lookup(&event.key_image)?;
+    let binding = bindings.lookup(&event.key_image)?;
     let tx_hash = escrow.settle(SettleArgs {
-        swap_id,
+        swap_id: binding.swap_id,
         adaptor_secret: event.tau,
+        min_received: binding.min_received,
         gas_limit: None,
     })?;
     Ok(SettlementOutcome { event, tx_hash })
@@ -224,9 +242,11 @@ impl RefundTimer for SystemTimer {
 mod tests {
     use super::*;
     use crate::contracts::TxHash;
+    use crate::escrow::Escrow as EscrowBindings;
     use crate::transport::{EvmCall, EvmMessageSigner};
     use adaptor_clsag::PreSig;
     use alloy_primitives::{Address, Bytes, B256};
+    use alloy_sol_types::SolCall;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use watcher::monero::WatchTarget;
@@ -276,6 +296,7 @@ mod tests {
         let watch = WatchTarget::new([0x11; 32], "tx", 0, sample_presig());
         let target = SettlementTarget {
             swap_id: [0x22; 32],
+            min_received: U256::from(1u64),
             watch,
         };
         let bindings = BindingMap::new(&[target]).unwrap();
@@ -316,7 +337,11 @@ mod tests {
 
     fn sample_target(key_image: [u8; 32], swap_id: [u8; 32]) -> SettlementTarget {
         let watch = WatchTarget::new(key_image, "tx", 0, sample_presig());
-        SettlementTarget { swap_id, watch }
+        SettlementTarget {
+            swap_id,
+            min_received: U256::from(1u64),
+            watch,
+        }
     }
 
     fn dummy_rpc() -> MoneroRpc {
@@ -332,7 +357,12 @@ mod tests {
         let outcome = await_with_watcher(&watcher, &bindings, &escrow).expect("await outcome");
         assert_eq!(outcome.event.tau, event.tau);
         assert_eq!(outcome.tx_hash, TxHash(B256::from([0xAA; 32])));
-        assert_eq!(transport.calls.lock().unwrap().len(), 1);
+        let calls = transport.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        let settle_call = EscrowBindings::settleCall::abi_decode(&calls[0].data, true)
+            .expect("decode settle calldata");
+        assert_eq!(settle_call.minReceived, U256::from(1u64));
+        drop(calls);
 
         let trigger = trigger_with_watcher(&watcher, &bindings, &escrow).unwrap();
         assert!(trigger.is_some());
