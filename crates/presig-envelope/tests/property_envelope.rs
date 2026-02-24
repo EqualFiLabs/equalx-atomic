@@ -4,9 +4,10 @@ use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::{PublicKey, SecretKey};
 use presig_envelope::{
     decrypt_presig, encrypt_presig, DecryptRequest, EncryptRequest, EncryptionOutput, Envelope,
-    EnvelopeContext, EnvelopeError,
+    EnvelopeContext, EnvelopeError, ENVELOPE_WIRE_MAX_LEN, ENVELOPE_WIRE_MIN_LEN,
 };
 use proptest::prelude::*;
+use sha3::{Digest, Keccak256};
 
 #[derive(Clone, Debug)]
 struct EncryptRequestInput {
@@ -283,10 +284,88 @@ proptest! {
         prop_assert!(matches!(result, Err(EnvelopeError::Aead)));
     }
 
+    /// Requirement 5.2: AAD formula binding contract.
+    #[test]
+    fn property18_aad_formula_binding(input in arb_encrypt_request_input()) {
+        let encrypted = encode_encryption(&input);
+        let mut hasher = Keccak256::new();
+        hasher.update(input.context.chain_id.to_be_bytes());
+        hasher.update(input.context.escrow_address);
+        hasher.update(input.context.swap_id);
+        hasher.update(input.context.settle_digest);
+        hasher.update(input.context.m_digest);
+        hasher.update(input.context.maker_address);
+        hasher.update(input.context.taker_address);
+        hasher.update([input.context.version]);
+        let expected = hasher.finalize().to_vec();
+        prop_assert_eq!(encrypted.parts.aad(), expected.as_slice());
+    }
+
     #[test]
     fn envelope_wire_roundtrip_with_generated_envelope(envelope in arb_envelope()) {
         let bytes = envelope.to_bytes();
         let decoded = Envelope::from_bytes(&bytes).expect("decode");
         prop_assert_eq!(decoded, envelope);
     }
+}
+
+#[test]
+fn malformed_envelope_wire_rejected() {
+    let too_short = vec![0u8; ENVELOPE_WIRE_MIN_LEN - 1];
+    assert!(matches!(
+        Envelope::from_bytes(&too_short),
+        Err(EnvelopeError::InvalidEnvelope)
+    ));
+
+    let too_large = vec![0u8; ENVELOPE_WIRE_MAX_LEN + 1];
+    assert!(matches!(
+        Envelope::from_bytes(&too_large),
+        Err(EnvelopeError::InvalidEnvelope)
+    ));
+}
+
+#[test]
+fn decrypt_rejects_noncanonical_ephemeral_pubkey_and_mismatched_settlement_digest() {
+    let taker_secret = [0x31u8; 32];
+    let taker_pubkey = taker_pubkey_from_secret(&taker_secret);
+    let context = EnvelopeContext {
+        chain_id: 1,
+        escrow_address: [0x11; 20],
+        swap_id: [0x22; 32],
+        settle_digest: [0x33; 32],
+        m_digest: [0x44; 32],
+        maker_address: [0x55; 20],
+        taker_address: [0x66; 20],
+        version: 1,
+    };
+    let presig = b"negative-path-presig".to_vec();
+    let input = EncryptRequestInput {
+        taker_secret,
+        taker_pubkey,
+        maker_eph_secret: Some([0x77; 32]),
+        presig,
+        context,
+    };
+    let encrypted = encode_encryption(&input);
+
+    let mut malformed = encrypted.envelope.clone();
+    malformed.maker_eph_public = [0xFF; 33];
+    let malformed_result = decrypt_presig(&DecryptRequest {
+        taker_secret: &input.taker_secret,
+        envelope: &malformed,
+        context: input.context,
+    });
+    assert!(matches!(
+        malformed_result,
+        Err(EnvelopeError::InvalidPublicKey)
+    ));
+
+    let mut mismatched = input.context;
+    mismatched.settle_digest[0] ^= 0xA5;
+    let mismatch_result = decrypt_presig(&DecryptRequest {
+        taker_secret: &input.taker_secret,
+        envelope: &encrypted.envelope,
+        context: mismatched,
+    });
+    assert!(matches!(mismatch_result, Err(EnvelopeError::Aead)));
 }

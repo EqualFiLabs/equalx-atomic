@@ -3,8 +3,8 @@
 //! Helpers for decoding AtomicDesk / SettlementEscrow events so dashboards and
 //! automation layers can surface reservation metadata and state transitions.
 //!
-//! The module does **not** perform any RPCs; call sites are expected to feed
-//! raw log topics + data gathered from an Ethereum node.
+//! The module includes a polling interface over a host-provided RPC trait and
+//! decodes raw logs into chronological lifecycle events.
 
 use alloy_primitives::{b256, Address, FixedBytes, B256, U256};
 use alloy_sol_types::{sol, SolType};
@@ -27,6 +27,65 @@ const TRANCHE_RESERVED_TOPIC: B256 =
     b256!("f1d082a8c1d907940678bec35245f9c9be7379f8b7306cbbb22671c0bca446fa");
 const TAKER_TRANCHE_RESERVED_TOPIC: B256 =
     b256!("b6e30a044e2238b5f350746e7b8a93a129a815a16d2b0edffa4e4acd3e88bc58");
+
+/// Raw EVM log returned by an RPC provider.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EvmLog {
+    pub address: Address,
+    pub topics: Vec<B256>,
+    pub data: Vec<u8>,
+    pub block_number: u64,
+    pub transaction_index: u64,
+    pub log_index: u64,
+}
+
+/// Polling request describing the block range and contracts to monitor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EvmPollRequest {
+    pub from_block: u64,
+    pub to_block: u64,
+    pub contract_addresses: Vec<Address>,
+}
+
+/// Decoded lifecycle event variants.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DecodedLifecycleEvent {
+    ReservationCreated(ReservationCreatedRecord),
+    HashlockSet(HashlockSetRecord),
+    AtomicReservationCreated(AtomicReservationRecord),
+    TrancheOpened(TrancheOpenedRecord),
+    TakerTrancheOpened(TakerTrancheOpenedRecord),
+    TrancheReserved(TrancheReservedRecord),
+    TakerTrancheReserved(TakerTrancheReservedRecord),
+    ReservationSettled {
+        reservation_id: FixedBytes<32>,
+        tau: [u8; 32],
+    },
+    ReservationRefunded {
+        reservation_id: FixedBytes<32>,
+        evidence: [u8; 32],
+    },
+}
+
+/// Chronologically sorted decoded event record.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecodedEvmEvent {
+    pub address: Address,
+    pub block_number: u64,
+    pub transaction_index: u64,
+    pub log_index: u64,
+    pub event: DecodedLifecycleEvent,
+}
+
+/// Abstraction over an EVM RPC provider capable of returning logs.
+pub trait EvmWatcherRpc {
+    fn get_logs(
+        &self,
+        from_block: u64,
+        to_block: u64,
+        contract_addresses: &[Address],
+    ) -> Result<Vec<EvmLog>>;
+}
 
 sol! {
     struct ReservationCreatedData {
@@ -327,6 +386,86 @@ pub fn decode_taker_tranche_reserved(
     })
 }
 
+/// Decode a lifecycle event based on topic[0].
+pub fn decode_lifecycle_event(topics: &[B256], data: &[u8]) -> Result<DecodedLifecycleEvent> {
+    let topic0 = topics
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow!("event topics cannot be empty"))?;
+    match topic0 {
+        RESERVATION_CREATED_TOPIC => {
+            decode_reservation_created(topics, data).map(DecodedLifecycleEvent::ReservationCreated)
+        }
+        HASHLOCK_SET_TOPIC => {
+            decode_hashlock_set(topics, data).map(DecodedLifecycleEvent::HashlockSet)
+        }
+        ATOMIC_RESERVATION_TOPIC => decode_atomic_reservation_created(topics, data)
+            .map(DecodedLifecycleEvent::AtomicReservationCreated),
+        TRANCHE_OPENED_TOPIC => {
+            decode_tranche_opened(topics, data).map(DecodedLifecycleEvent::TrancheOpened)
+        }
+        TAKER_TRANCHE_OPENED_TOPIC => {
+            decode_taker_tranche_opened(topics, data).map(DecodedLifecycleEvent::TakerTrancheOpened)
+        }
+        TRANCHE_RESERVED_TOPIC => {
+            decode_tranche_reserved(topics, data).map(DecodedLifecycleEvent::TrancheReserved)
+        }
+        TAKER_TRANCHE_RESERVED_TOPIC => decode_taker_tranche_reserved(topics, data)
+            .map(DecodedLifecycleEvent::TakerTrancheReserved),
+        RESERVATION_SETTLED_TOPIC => {
+            let (reservation_id, tau) = decode_reservation_settled(topics, data)?;
+            Ok(DecodedLifecycleEvent::ReservationSettled {
+                reservation_id,
+                tau,
+            })
+        }
+        RESERVATION_REFUNDED_TOPIC => {
+            let (reservation_id, evidence) = decode_reservation_refunded(topics, data)?;
+            Ok(DecodedLifecycleEvent::ReservationRefunded {
+                reservation_id,
+                evidence,
+            })
+        }
+        _ => Err(anyhow!("unknown event topic: {topic0:#x}")),
+    }
+}
+
+/// Poll logs from a provider and return decoded lifecycle events in chronological order.
+pub fn poll_lifecycle_events<R: EvmWatcherRpc>(
+    rpc: &R,
+    request: &EvmPollRequest,
+) -> Result<Vec<DecodedEvmEvent>> {
+    ensure!(
+        request.from_block <= request.to_block,
+        "invalid block range: from_block > to_block"
+    );
+    ensure!(
+        !request.contract_addresses.is_empty(),
+        "contract address set cannot be empty"
+    );
+
+    let mut logs = rpc.get_logs(
+        request.from_block,
+        request.to_block,
+        &request.contract_addresses,
+    )?;
+    logs.retain(|log| request.contract_addresses.contains(&log.address));
+    logs.sort_by_key(|log| (log.block_number, log.transaction_index, log.log_index));
+
+    logs.into_iter()
+        .map(|log| {
+            let event = decode_lifecycle_event(&log.topics, &log.data)?;
+            Ok(DecodedEvmEvent {
+                address: log.address,
+                block_number: log.block_number,
+                transaction_index: log.transaction_index,
+                log_index: log.log_index,
+                event,
+            })
+        })
+        .collect()
+}
+
 fn topic_to_bytes32(topic: B256) -> FixedBytes<32> {
     let bytes: [u8; 32] = topic.into();
     FixedBytes::<32>::from(bytes)
@@ -343,6 +482,7 @@ mod tests {
     use alloy_primitives::{address, B256};
     use alloy_sol_types::SolValue;
     use proptest::prelude::*;
+    use std::sync::{Arc, Mutex};
 
     fn encode_address_topic(addr: Address) -> B256 {
         let mut buf = [0u8; 32];
@@ -801,6 +941,52 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Default)]
+    struct MockPollRpc {
+        logs: Vec<EvmLog>,
+        request_capture: Arc<Mutex<Option<(u64, u64, Vec<Address>)>>>,
+    }
+
+    impl MockPollRpc {
+        fn with_logs(logs: Vec<EvmLog>) -> Self {
+            Self {
+                logs,
+                request_capture: Arc::new(Mutex::new(None)),
+            }
+        }
+    }
+
+    impl EvmWatcherRpc for MockPollRpc {
+        fn get_logs(
+            &self,
+            from_block: u64,
+            to_block: u64,
+            contract_addresses: &[Address],
+        ) -> Result<Vec<EvmLog>> {
+            *self.request_capture.lock().expect("capture lock") =
+                Some((from_block, to_block, contract_addresses.to_vec()));
+            Ok(self.logs.clone())
+        }
+    }
+
+    fn log_for(
+        address: Address,
+        event: GeneratedEvmEvent,
+        block_number: u64,
+        transaction_index: u64,
+        log_index: u64,
+    ) -> EvmLog {
+        let (topics, data) = event.encode();
+        EvmLog {
+            address,
+            topics,
+            data,
+            block_number,
+            transaction_index,
+            log_index,
+        }
+    }
+
     fn arb_address() -> impl Strategy<Value = Address> {
         any::<[u8; 20]>().prop_map(|bytes| Address::from_slice(&bytes))
     }
@@ -1250,6 +1436,132 @@ mod tests {
         assert_eq!(decoded_id, reservation_id);
         assert_eq!(decoded_evidence, evidence);
         assert!(decode_reservation_refunded(&refunded_topics[..1], &refunded_data).is_err());
+    }
+
+    #[test]
+    fn poll_interface_decodes_and_sorts_chronologically() {
+        let tracked = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let untracked = address!("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let logs = vec![
+            log_for(
+                tracked,
+                GeneratedEvmEvent::ReservationRefunded {
+                    reservation_id: [0x44; 32],
+                    evidence: [0x55; 32],
+                },
+                12,
+                0,
+                1,
+            ),
+            log_for(
+                untracked,
+                GeneratedEvmEvent::HashlockSet {
+                    reservation_id: [0x01; 32],
+                    hashlock: [0x02; 32],
+                },
+                9,
+                0,
+                0,
+            ),
+            log_for(
+                tracked,
+                GeneratedEvmEvent::HashlockSet {
+                    reservation_id: [0x10; 32],
+                    hashlock: [0x11; 32],
+                },
+                10,
+                0,
+                2,
+            ),
+            log_for(
+                tracked,
+                GeneratedEvmEvent::ReservationCreated {
+                    reservation_id: [0x20; 32],
+                    taker: address!("0x7777777777777777777777777777777777777777"),
+                    desk: address!("0x8888888888888888888888888888888888888888"),
+                    amount: U256::from(100u64),
+                    counter: U256::from(5u64),
+                },
+                10,
+                0,
+                1,
+            ),
+        ];
+        let rpc = MockPollRpc::with_logs(logs);
+        let request = EvmPollRequest {
+            from_block: 9,
+            to_block: 12,
+            contract_addresses: vec![tracked],
+        };
+
+        let decoded = poll_lifecycle_events(&rpc, &request).expect("poll lifecycle events");
+        assert_eq!(decoded.len(), 3);
+        assert_eq!(
+            decoded
+                .iter()
+                .map(|event| (event.block_number, event.transaction_index, event.log_index))
+                .collect::<Vec<_>>(),
+            vec![(10, 0, 1), (10, 0, 2), (12, 0, 1)]
+        );
+        assert!(matches!(
+            decoded[0].event,
+            DecodedLifecycleEvent::ReservationCreated(_)
+        ));
+        assert!(matches!(
+            decoded[1].event,
+            DecodedLifecycleEvent::HashlockSet(_)
+        ));
+        assert!(matches!(
+            decoded[2].event,
+            DecodedLifecycleEvent::ReservationRefunded { .. }
+        ));
+
+        let captured = rpc.request_capture.lock().expect("capture lock");
+        let (from, to, addresses) = captured.clone().expect("captured request");
+        assert_eq!(from, 9);
+        assert_eq!(to, 12);
+        assert_eq!(addresses, vec![tracked]);
+    }
+
+    #[test]
+    fn poll_interface_rejects_unknown_topics_for_tracked_contracts() {
+        let tracked = address!("0x9999999999999999999999999999999999999999");
+        let rpc = MockPollRpc::with_logs(vec![EvmLog {
+            address: tracked,
+            topics: vec![B256::from([0xFE; 32])],
+            data: vec![],
+            block_number: 1,
+            transaction_index: 0,
+            log_index: 0,
+        }]);
+        let request = EvmPollRequest {
+            from_block: 1,
+            to_block: 2,
+            contract_addresses: vec![tracked],
+        };
+
+        let err = poll_lifecycle_events(&rpc, &request).expect_err("unknown topic must fail");
+        assert!(err.to_string().contains("unknown event topic"));
+    }
+
+    #[test]
+    fn poll_interface_validates_request_shape() {
+        let tracked = address!("0x1212121212121212121212121212121212121212");
+        let rpc = MockPollRpc::default();
+
+        let bad_range = EvmPollRequest {
+            from_block: 10,
+            to_block: 9,
+            contract_addresses: vec![tracked],
+        };
+        assert!(poll_lifecycle_events(&rpc, &bad_range).is_err());
+
+        let empty_contracts = EvmPollRequest {
+            from_block: 0,
+            to_block: 1,
+            contract_addresses: vec![],
+        };
+        assert!(poll_lifecycle_events(&rpc, &empty_contracts).is_err());
     }
 }
 

@@ -453,6 +453,7 @@ mod tests {
     use std::{
         collections::{BTreeSet, VecDeque},
         sync::{Arc, Mutex, OnceLock},
+        time::Duration,
     };
     use tx_builder::{
         assemble_unsigned_tx, compute_clsag_message_hash, convert::key_offsets_from_global_indices,
@@ -810,6 +811,30 @@ mod tests {
         })
     }
 
+    #[derive(Clone, Debug)]
+    struct TauExtractionScenario {
+        target_count: usize,
+        spent_index: usize,
+        dummy_key_images: Vec<[u8; 32]>,
+    }
+
+    fn arb_tau_extraction_scenario() -> impl Strategy<Value = TauExtractionScenario> {
+        (
+            1usize..6usize,
+            prop::collection::vec(any::<[u8; 32]>(), 1..6),
+            any::<u8>(),
+        )
+            .prop_map(|(target_count, mut dummy_key_images, spent_seed)| {
+                dummy_key_images.resize(target_count, [0u8; 32]);
+                let spent_index = (spent_seed as usize) % target_count;
+                TauExtractionScenario {
+                    target_count,
+                    spent_index,
+                    dummy_key_images,
+                }
+            })
+    }
+
     struct ErrorScenarioRpc {
         fixture: Fixture,
         scenario: RpcErrorScenario,
@@ -890,6 +915,42 @@ mod tests {
                 RpcErrorScenario::StatusMismatch { .. }
                 | RpcErrorScenario::MissingTransaction { .. } => unreachable!(),
             }
+        }
+    }
+
+    #[derive(Clone)]
+    struct TauExtractionRpc {
+        inner: MockRpc,
+        statuses: Vec<u32>,
+    }
+
+    impl TauExtractionRpc {
+        fn new(fixture: &Fixture, statuses: Vec<u32>) -> Self {
+            Self {
+                inner: MockRpc::new(fixture),
+                statuses,
+            }
+        }
+    }
+
+    impl WatcherRpc for TauExtractionRpc {
+        fn is_key_image_spent(&self, key_images: &[Vec<u8>]) -> Result<Vec<u32>> {
+            ensure!(
+                key_images.len() == self.statuses.len(),
+                "mock expects status vector to match watched key images"
+            );
+            Ok(self.statuses.clone())
+        }
+
+        fn get_transactions(
+            &self,
+            request: &GetTransactionsRequest,
+        ) -> Result<GetTransactionsResponse> {
+            self.inner.get_transactions(request)
+        }
+
+        fn get_outs(&self, request: &GetOutsRequest) -> Result<GetOutsResponse> {
+            self.inner.get_outs(request)
         }
     }
 
@@ -1046,6 +1107,15 @@ mod tests {
     }
 
     #[test]
+    fn poll_interval_configuration_is_applied() {
+        let watcher = MoneroWatcher::with_rpc(InPoolRpc::default(), vec![sample_target()]);
+        assert_eq!(watcher.poll_interval(), Duration::from_secs(30));
+
+        let custom = watcher.with_poll_interval(Duration::from_millis(250));
+        assert_eq!(custom.poll_interval(), Duration::from_millis(250));
+    }
+
+    #[test]
     fn watcher_errors_on_status_length_mismatch() {
         let watcher = MoneroWatcher::with_rpc(MismatchStatusRpc::default(), vec![sample_target()]);
         assert!(watcher.poll_once().is_err());
@@ -1105,6 +1175,37 @@ mod tests {
             prop_assert_eq!(event.tx_hash, fixture.target.tx_hash);
             prop_assert_eq!(event.spend_state, SpendState::Confirmed);
             prop_assert_eq!(event.tau, fixture.tau);
+        }
+
+        /// Property 22: Monero watcher tau extraction.
+        #[test]
+        fn property22_monero_watcher_tau_extraction(scenario in arb_tau_extraction_scenario()) {
+            let fixture = shared_fixture();
+            let mut targets = Vec::with_capacity(scenario.target_count);
+            let mut statuses = vec![0u32; scenario.target_count];
+
+            for idx in 0..scenario.target_count {
+                if idx == scenario.spent_index {
+                    targets.push(fixture.target.clone());
+                    statuses[idx] = 2u32;
+                } else {
+                    let mut dummy = fixture.target.clone();
+                    dummy.key_image = scenario.dummy_key_images[idx];
+                    dummy.tx_hash = format!("dummy-{idx}");
+                    targets.push(dummy);
+                }
+            }
+
+            let watcher = MoneroWatcher::with_rpc(
+                TauExtractionRpc::new(&fixture, statuses),
+                targets,
+            );
+            let event = watcher.poll_once().expect("poll").expect("tau event");
+            prop_assert_eq!(event.key_image, fixture.target.key_image);
+            prop_assert_eq!(event.tx_hash, fixture.target.tx_hash);
+            prop_assert_eq!(event.input_index, fixture.target.input_index);
+            prop_assert_eq!(event.tau, fixture.tau);
+            prop_assert_eq!(event.spend_state, SpendState::Confirmed);
         }
 
         /// Property 23: Monero watcher RPC error handling.

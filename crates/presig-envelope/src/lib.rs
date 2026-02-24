@@ -1,6 +1,6 @@
 //! CLSAG pre-signature envelope encryption helpers.
 //!
-//! Implements the `secpp256k1` ECDH + HKDF-SHA256 + ChaCha20-Poly1305 AEAD
+//! Implements the `secp256k1` ECDH + HKDF-SHA256 + ChaCha20-Poly1305 AEAD
 //! binding described in `CLSAG-ADAPTOR-SPEC.md`. The API exposes the
 //! encrypted envelope alongside the derived key, nonce, and AAD for auditing.
 
@@ -21,6 +21,8 @@ const SALT: &[u8] = b"EqualX v1 presig";
 const TAG_LEN: usize = 16;
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
+pub const ENVELOPE_WIRE_MIN_LEN: usize = 1 + 33 + TAG_LEN;
+pub const ENVELOPE_WIRE_MAX_LEN: usize = 4096;
 
 /// Structured envelope returned to on-chain mailbox.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,25 +48,24 @@ impl Envelope {
 
     /// Parse an envelope from bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, EnvelopeError> {
-        if bytes.len() < 1 + 33 + TAG_LEN {
+        if !(ENVELOPE_WIRE_MIN_LEN..=ENVELOPE_WIRE_MAX_LEN).contains(&bytes.len()) {
             return Err(EnvelopeError::InvalidEnvelope);
         }
         let version = bytes[0];
         let mut maker_eph_public = [0u8; 33];
         maker_eph_public.copy_from_slice(&bytes[1..1 + 33]);
         let ct_len = bytes.len() - 1 - 33 - TAG_LEN;
-        if ct_len == 0 {
-            return Err(EnvelopeError::InvalidEnvelope);
-        }
         let ciphertext = bytes[1 + 33..1 + 33 + ct_len].to_vec();
         let mut tag = [0u8; TAG_LEN];
         tag.copy_from_slice(&bytes[bytes.len() - TAG_LEN..]);
-        Ok(Self {
+        let envelope = Self {
             version,
             maker_eph_public,
             ciphertext,
             tag,
-        })
+        };
+        validate_envelope_shape(&envelope)?;
+        Ok(envelope)
     }
 }
 
@@ -196,19 +197,19 @@ pub fn encrypt_presig(req: &EncryptRequest<'_>) -> Result<EncryptionOutput, Enve
     let mut maker_eph_public = [0u8; 33];
     maker_eph_public.copy_from_slice(maker_pub.to_encoded_point(true).as_bytes());
 
-    Ok(EncryptionOutput {
-        envelope: Envelope {
-            version: req.context.version,
-            maker_eph_public,
-            ciphertext: ct,
-            tag,
-        },
-        parts,
-    })
+    let envelope = Envelope {
+        version: req.context.version,
+        maker_eph_public,
+        ciphertext: ct,
+        tag,
+    };
+    validate_envelope_shape(&envelope)?;
+    Ok(EncryptionOutput { envelope, parts })
 }
 
 /// Decrypt an envelope, returning the plaintext and derived parts.
 pub fn decrypt_presig(req: &DecryptRequest<'_>) -> Result<DecryptionOutput, EnvelopeError> {
+    validate_envelope_shape(req.envelope)?;
     let maker_pub = PublicKey::from_sec1_bytes(&req.envelope.maker_eph_public)
         .map_err(|_| EnvelopeError::InvalidPublicKey)?;
     let taker_secret =
@@ -263,6 +264,14 @@ fn derive_parts(shared: &[u8], ctx: &EnvelopeContext) -> Result<EnvelopeParts, E
     Ok(EnvelopeParts { key, nonce, aad })
 }
 
+fn validate_envelope_shape(envelope: &Envelope) -> Result<(), EnvelopeError> {
+    let wire_len = 1 + envelope.maker_eph_public.len() + envelope.ciphertext.len() + TAG_LEN;
+    if !(ENVELOPE_WIRE_MIN_LEN..=ENVELOPE_WIRE_MAX_LEN).contains(&wire_len) {
+        return Err(EnvelopeError::InvalidEnvelope);
+    }
+    Ok(())
+}
+
 fn compute_aad(ctx: &EnvelopeContext) -> Vec<u8> {
     let mut hasher = Keccak256::new();
     hasher.update(ctx.chain_id.to_be_bytes());
@@ -306,6 +315,10 @@ mod serde_pubkey {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chacha20poly1305::aead::{Aead, Payload};
+    use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce};
+    use hkdf::Hkdf;
+    use sha2::Sha256;
 
     #[test]
     fn envelope_round_trip() {
@@ -432,5 +445,116 @@ mod tests {
         let expected = hasher.finalize().to_vec();
 
         assert_eq!(aad, expected);
+    }
+
+    #[test]
+    fn envelope_wire_shape_bounds() {
+        let mut min = vec![0u8; ENVELOPE_WIRE_MIN_LEN];
+        min[0] = 1;
+        min[1] = 0x02;
+        min[1 + 33..].fill(0x11);
+        let parsed = Envelope::from_bytes(&min).expect("minimum envelope should decode");
+        assert!(parsed.ciphertext.is_empty());
+        assert_eq!(parsed.to_bytes().len(), ENVELOPE_WIRE_MIN_LEN);
+
+        let oversized = vec![0u8; ENVELOPE_WIRE_MAX_LEN + 1];
+        assert!(matches!(
+            Envelope::from_bytes(&oversized),
+            Err(EnvelopeError::InvalidEnvelope)
+        ));
+    }
+
+    #[test]
+    fn encrypt_rejects_oversized_wire_payload() {
+        let taker_secret = [0x21u8; 32];
+        let taker_sk = SecretKey::from_slice(&taker_secret).expect("taker secret");
+        let taker_pub = PublicKey::from_secret_scalar(&taker_sk.to_nonzero_scalar());
+        let mut taker_pub_bytes = [0u8; 33];
+        taker_pub_bytes.copy_from_slice(taker_pub.to_encoded_point(true).as_bytes());
+
+        let ctx = EnvelopeContext {
+            chain_id: 1,
+            escrow_address: [0x01; 20],
+            swap_id: [0x02; 32],
+            settle_digest: [0x03; 32],
+            m_digest: [0x04; 32],
+            maker_address: [0x05; 20],
+            taker_address: [0x06; 20],
+            version: 1,
+        };
+
+        let presig = vec![0xAB; ENVELOPE_WIRE_MAX_LEN - ENVELOPE_WIRE_MIN_LEN + 1];
+        let result = encrypt_presig(&EncryptRequest {
+            taker_pubkey: &taker_pub_bytes,
+            maker_eph_secret: Some([0x42; 32]),
+            presig: &presig,
+            context: ctx,
+        });
+        assert!(matches!(result, Err(EnvelopeError::InvalidEnvelope)));
+    }
+
+    #[test]
+    fn encrypt_matches_ecdh_hkdf_chacha_construction() {
+        let taker_secret = [0x13u8; 32];
+        let taker_sk = SecretKey::from_slice(&taker_secret).expect("taker secret");
+        let taker_pub = PublicKey::from_secret_scalar(&taker_sk.to_nonzero_scalar());
+        let mut taker_pub_bytes = [0u8; 33];
+        taker_pub_bytes.copy_from_slice(taker_pub.to_encoded_point(true).as_bytes());
+
+        let maker_eph = [0x37u8; 32];
+        let ctx = EnvelopeContext {
+            chain_id: 8453,
+            escrow_address: [0xAA; 20],
+            swap_id: [0xBB; 32],
+            settle_digest: [0xCC; 32],
+            m_digest: [0xDD; 32],
+            maker_address: [0xEE; 20],
+            taker_address: [0x0F; 20],
+            version: 1,
+        };
+        let presig = b"manual-crypto-construction";
+
+        let encrypted = encrypt_presig(&EncryptRequest {
+            taker_pubkey: &taker_pub_bytes,
+            maker_eph_secret: Some(maker_eph),
+            presig,
+            context: ctx,
+        })
+        .expect("encrypt");
+
+        let taker_pub_parsed = PublicKey::from_sec1_bytes(&taker_pub_bytes).expect("pub");
+        let maker_sk = SecretKey::from_slice(&maker_eph).expect("maker secret");
+        let shared = diffie_hellman(&maker_sk.to_nonzero_scalar(), taker_pub_parsed.as_affine());
+
+        let mut okm = [0u8; KEY_LEN + NONCE_LEN];
+        let mut info = Vec::with_capacity(64);
+        info.extend_from_slice(&ctx.swap_id);
+        info.extend_from_slice(&ctx.settle_digest);
+        Hkdf::<Sha256>::new(Some(SALT), shared.raw_secret_bytes().as_slice())
+            .expand(&info, &mut okm)
+            .expect("hkdf expand");
+
+        let expected_aad = compute_aad(&ctx);
+        assert_eq!(encrypted.parts.key().as_slice(), &okm[..KEY_LEN]);
+        assert_eq!(encrypted.parts.nonce().as_slice(), &okm[KEY_LEN..]);
+        assert_eq!(encrypted.parts.aad(), expected_aad.as_slice());
+
+        let mut key = Key::default();
+        key.clone_from_slice(&okm[..KEY_LEN]);
+        let mut nonce = Nonce::default();
+        nonce.clone_from_slice(&okm[KEY_LEN..]);
+        let cipher = ChaCha20Poly1305::new(&key);
+        let combined = cipher
+            .encrypt(
+                &nonce,
+                Payload {
+                    msg: presig,
+                    aad: &expected_aad,
+                },
+            )
+            .expect("manual encrypt");
+        let split = combined.len() - TAG_LEN;
+        assert_eq!(&combined[..split], encrypted.envelope.ciphertext.as_slice());
+        assert_eq!(&combined[split..], encrypted.envelope.tag.as_slice());
     }
 }
