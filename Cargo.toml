@@ -5,6 +5,8 @@ members = [
     "crates/equalx-sdk",
     "crates/equalx-error",
     "crates/host-adapter",
+    "crates/mock-adapter",
+    "crates/conformance",
     "crates/orchestrator",
     "crates/cli",
     "crates/ffi-c",

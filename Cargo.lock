@@ -1496,6 +1496,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "conformance"
+version = "0.0.1"
+dependencies = [
+ "host-adapter",
+ "mock-adapter",
+ "orchestrator",
+]
+
+[[package]]
 name = "const-hex"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3257,6 +3266,14 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mock-adapter"
+version = "0.0.1"
+dependencies = [
+ "equalx-error",
+ "host-adapter",
 ]
 
 [[package]]
