@@ -22,6 +22,8 @@ enum Commands {
     SettleLocal(commands::settle::SettleLocalArgs),
     /// Deadline-based refund helper.
     RefundLocal(commands::refund::RefundLocalArgs),
+    /// Orchestrator reference harness (maker/taker flows).
+    Orchestrator(commands::orchestrator::OrchestratorCli),
 }
 
 #[derive(Parser)]
@@ -50,6 +52,12 @@ fn main() {
         }
         Commands::RefundLocal(args) => {
             if let Err(err) = commands::refund::run(args) {
+                eprintln!("error: {err:?}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Orchestrator(args) => {
+            if let Err(err) = commands::orchestrator::run(args) {
                 eprintln!("error: {err:?}");
                 std::process::exit(1);
             }

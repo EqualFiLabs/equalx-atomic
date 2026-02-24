@@ -2,6 +2,17 @@
 
 use core::fmt;
 
+/// EqualX integration kit semantic version (MAJOR).
+pub const VERSION_MAJOR: u16 = 0;
+/// EqualX integration kit semantic version (MINOR).
+pub const VERSION_MINOR: u16 = 0;
+/// EqualX integration kit semantic version (PATCH).
+pub const VERSION_PATCH: u16 = 1;
+/// EqualX ABI wire version returned via `eswp_wire_version`.
+pub const ABI_WIRE_VERSION: u32 = 1;
+/// Human-readable semantic version string.
+pub const VERSION: &str = "0.0.1";
+
 /// Result type alias for operations that return [`ErrorCode`].
 pub type Result<T> = core::result::Result<T, ErrorCode>;
 
@@ -160,7 +171,10 @@ impl From<AdapterError> for ErrorCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{AdapterError, ErrorCode, ErrorDomain};
+    use super::{
+        AdapterError, ErrorCode, ErrorDomain, ABI_WIRE_VERSION, VERSION, VERSION_MAJOR,
+        VERSION_MINOR, VERSION_PATCH,
+    };
 
     #[test]
     fn stable_numeric_values_match_design_contract() {
@@ -201,5 +215,14 @@ mod tests {
         assert!(rendered.contains("AdapterCallFailed"));
         assert!(rendered.contains("callback failure"));
         assert!(rendered.contains("1234"));
+    }
+
+    #[test]
+    fn semantic_version_constants_are_consistent() {
+        assert_eq!(VERSION_MAJOR, 0);
+        assert_eq!(VERSION_MINOR, 0);
+        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION, "0.0.1");
+        assert_eq!(ABI_WIRE_VERSION, 1);
     }
 }

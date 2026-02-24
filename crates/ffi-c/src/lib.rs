@@ -3,12 +3,15 @@ use adaptor_clsag::{
     make_pre_sig as adaptor_make_pre_sig, verify as adaptor_verify,
     wire::{ClsagFinalSigContainer, ClsagPreSig},
     ClsagCtx, EswpError, FinalSig, PreSig, SettlementCtx, SignerWitness, BACKEND_ID_CLSAG,
-    WIRE_VERSION,
+    WIRE_VERSION as CLSAG_WIRE_VERSION,
 };
 use alloy_primitives::{Address as AlloyAddress, Bytes, B256, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use equalx_error::{AdapterError as HostAdapterError, ErrorCode as KitErrorCode};
+use equalx_error::{
+    AdapterError as HostAdapterError, ErrorCode as KitErrorCode, ABI_WIRE_VERSION, VERSION_MAJOR,
+    VERSION_MINOR, VERSION_PATCH,
+};
 use equalx_sdk::error::ErrorCode;
 use equalx_sdk::transport::{EvmCall, EvmMessageSigner, EvmTransport, EvmViewTransport};
 use equalx_sdk::{
@@ -35,10 +38,12 @@ use once_cell::sync::Lazy;
 use orchestrator::{
     MoneroContext, OrchestratorConfig, ReservationId, ReservationParams, SwapOrchestrator,
 };
+#[cfg(test)]
+use std::ffi::CStr;
 use std::{
     collections::{HashMap, HashSet},
     convert::TryFrom,
-    ffi::{CStr, CString},
+    ffi::CString,
     io::Cursor,
     panic::{self, AssertUnwindSafe},
     ptr, slice, str,
@@ -463,23 +468,6 @@ static L3_STATE: Lazy<Mutex<L3State>> = Lazy::new(|| Mutex::new(L3State::default
 static BUFFER_ALLOCS: Lazy<Mutex<HashMap<usize, usize>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static STRING_ALLOCS: Lazy<Mutex<HashSet<usize>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
-fn parse_version_triplet() -> (u16, u16, u16) {
-    let mut parts = env!("CARGO_PKG_VERSION").split('.');
-    let major = parts
-        .next()
-        .and_then(|v| v.parse::<u16>().ok())
-        .unwrap_or(0);
-    let minor = parts
-        .next()
-        .and_then(|v| v.parse::<u16>().ok())
-        .unwrap_or(0);
-    let patch = parts
-        .next()
-        .and_then(|v| v.parse::<u16>().ok())
-        .unwrap_or(0);
-    (major, minor, patch)
-}
-
 fn ffi_guard<F>(f: F) -> c_int
 where
     F: FnOnce() -> Result<(), FfiError>,
@@ -728,7 +716,7 @@ fn encode_pre_bytes(
 
     let presig = ClsagPreSig {
         magic: adaptor_clsag::wire::MAGIC_CLSAG_PRESIG,
-        wire_version: WIRE_VERSION,
+        wire_version: CLSAG_WIRE_VERSION,
         backend: BACKEND_ID_CLSAG,
         ring_size,
         resp_index: u8::try_from(pre.j).map_err(|_| FfiError::RingIndexOutOfRange)?,
@@ -834,7 +822,7 @@ fn encode_final_bytes(pre: &PreSig, final_sig: &FinalSig) -> Result<Vec<u8>, Ffi
 
     let container = ClsagFinalSigContainer {
         magic: adaptor_clsag::wire::MAGIC_CLSAG_FINAL,
-        wire_version: WIRE_VERSION,
+        wire_version: CLSAG_WIRE_VERSION,
         backend: BACKEND_ID_CLSAG,
         resp_index: u8::try_from(pre.j).map_err(|_| FfiError::RingIndexOutOfRange)?,
         final_sig: final_bytes,
@@ -1764,7 +1752,7 @@ fn write_call_outputs(
 
 #[no_mangle]
 pub extern "C" fn eswp_wire_version() -> c_uint {
-    WIRE_VERSION as c_uint
+    ABI_WIRE_VERSION as c_uint
 }
 #[no_mangle]
 pub extern "C" fn eswp_backend_clsag_id() -> c_uchar {
@@ -3384,11 +3372,10 @@ pub unsafe extern "C" fn eswp_capability_query(out_descriptor: *mut CapabilityDe
         if out_descriptor.is_null() {
             return Err(FfiError::NullPointer);
         }
-        let (major, minor, patch) = parse_version_triplet();
         *out_descriptor = CapabilityDescriptor {
-            version_major: major,
-            version_minor: minor,
-            version_patch: patch,
+            version_major: VERSION_MAJOR,
+            version_minor: VERSION_MINOR,
+            version_patch: VERSION_PATCH,
             backends: BACKEND_MASK_CLSAG,
             api_groups: API_GROUP_KEY_REGISTRY
                 | API_GROUP_MAILBOX
@@ -3396,7 +3383,7 @@ pub unsafe extern "C" fn eswp_capability_query(out_descriptor: *mut CapabilityDe
                 | API_GROUP_ESCROW
                 | API_GROUP_EVENT_DECODE
                 | API_GROUP_ORCHESTRATOR,
-            wire_version: WIRE_VERSION as u32,
+            wire_version: ABI_WIRE_VERSION,
         };
         Ok(())
     })

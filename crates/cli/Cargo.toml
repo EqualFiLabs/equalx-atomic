@@ -27,6 +27,8 @@ reqwest = { version = "0.11", default-features = false, features = ["json", "rus
 equalx-sdk = { path = "../equalx-sdk" }
 monero-rpc = { path = "../monero-rpc" }
 watcher = { path = "../watcher" }
+orchestrator = { path = "../orchestrator" }
+mock-adapter = { path = "../mock-adapter" }
 chacha20poly1305 = "0.10"
 hkdf = "0.12"
 k256 = { version = "0.13", features = ["arithmetic"] }
