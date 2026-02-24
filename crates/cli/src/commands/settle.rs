@@ -5,8 +5,8 @@ use alloy_primitives::U256;
 use anyhow::{anyhow, ensure, Context, Result};
 use clap::{Args, ValueEnum};
 use equalx_sdk::{
-    await_settle, trigger_settlement, AlloyHttpTransport, EscrowClient, SettleArgs,
-    SettlementOutcome, SettlementTarget,
+    await_settle, min_received_with_slippage, trigger_settlement, AlloyHttpTransport, EscrowClient,
+    SettleArgs, SettlementOutcome, SettlementTarget,
 };
 use monero_rpc::MoneroRpc;
 use serde::Deserialize;
@@ -30,6 +30,14 @@ pub struct SettleLocalArgs {
     /// Minimum amount expected from settle() (wei, decimal or 0x-prefixed hex).
     #[arg(long)]
     pub min_received: Option<String>,
+
+    /// Expected output amount before slippage haircut (wei, decimal or 0x-prefixed hex).
+    #[arg(long, conflicts_with = "min_received")]
+    pub expected_out: Option<String>,
+
+    /// Slippage tolerance in basis points (0..=10000). Used with `--expected-out`.
+    #[arg(long, default_value_t = 0)]
+    pub slippage_bps: u16,
 
     /// Finalized Monero tx hash that spent the watched input.
     #[arg(long)]
@@ -110,11 +118,11 @@ fn run_live(args: SettleLocalArgs) -> Result<()> {
         .as_ref()
         .context("--swap-id is required unless --fixture is used")?;
     let swap_id = parse_hex_array::<32>(swap_id_hex, "swap_id")?;
-    let min_received_raw = args
-        .min_received
-        .as_ref()
-        .context("--min-received is required unless --fixture is used")?;
-    let min_received = parse_u256(min_received_raw, "min_received")?;
+    let min_received = resolve_min_received(
+        args.min_received.as_deref(),
+        args.expected_out.as_deref(),
+        args.slippage_bps,
+    )?;
 
     let artifact = PresigArtifact::load(presig_path)?;
     let pre_sig = artifact.build_pre_sig()?;
@@ -310,6 +318,79 @@ fn parse_u256(value: &str, label: &str) -> Result<U256> {
     trimmed
         .parse::<U256>()
         .map_err(|e| anyhow!("parse {label}: {e}"))
+}
+
+fn resolve_min_received(
+    min_received_raw: Option<&str>,
+    expected_out_raw: Option<&str>,
+    slippage_bps: u16,
+) -> Result<U256> {
+    match (min_received_raw, expected_out_raw) {
+        (Some(_), Some(_)) => Err(anyhow!(
+            "--min-received and --expected-out are mutually exclusive"
+        )),
+        (Some(value), None) => {
+            if slippage_bps != 0 {
+                return Err(anyhow!(
+                    "--slippage-bps requires --expected-out when --min-received is not used"
+                ));
+            }
+            parse_u256(value, "min_received")
+        }
+        (None, Some(expected_out)) => {
+            let expected = parse_u256(expected_out, "expected_out")?;
+            min_received_with_slippage(expected, slippage_bps)
+                .map_err(|err| anyhow!("compute min_received: {err}"))
+        }
+        (None, None) => Err(anyhow!(
+            "one of --min-received or --expected-out must be provided"
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_min_received_accepts_explicit_value() {
+        let resolved = resolve_min_received(Some("12345"), None, 0).expect("explicit value");
+        assert_eq!(resolved, U256::from(12_345u64));
+    }
+
+    #[test]
+    fn resolve_min_received_computes_from_expected_and_slippage() {
+        let resolved =
+            resolve_min_received(None, Some("1000000"), 250).expect("expected-out + slippage");
+        assert_eq!(resolved, U256::from(975_000u64));
+    }
+
+    #[test]
+    fn resolve_min_received_rejects_conflicting_inputs() {
+        let err = resolve_min_received(Some("1"), Some("2"), 0).expect_err("conflict");
+        assert!(
+            err.to_string().contains("mutually exclusive"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_min_received_rejects_slippage_without_expected_out() {
+        let err = resolve_min_received(Some("1"), None, 1).expect_err("invalid slippage usage");
+        assert!(
+            err.to_string().contains("requires --expected-out"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_min_received_rejects_invalid_bps() {
+        let err = resolve_min_received(None, Some("100"), 10_001).expect_err("invalid bps");
+        assert!(
+            err.to_string().contains("PolicySlippageBps"),
+            "unexpected error: {err}"
+        );
+    }
 }
 
 impl PresigArtifact {

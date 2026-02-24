@@ -45,9 +45,10 @@ pub use key_management::{
 };
 pub use key_registry::KeyRegistryClient;
 pub use ops::{
-    detect_reorg, reconcile_reorg, ConfirmationPolicy, Eip1559FeeParams, GasPolicy,
-    ReceiptSnapshot, ReconciliationOutcome, ReconciliationState, ReorgReason, ReorgReasonKind,
-    ReorgRpc, RpcEndpointClient, RpcFallbackClient, RpcFallbackConfig, RpcFallbackOutcome,
+    detect_reorg, min_received_with_slippage, reconcile_reorg, ConfirmationPolicy,
+    Eip1559FeeParams, GasPolicy, ReceiptSnapshot, ReconciliationOutcome, ReconciliationState,
+    ReorgReason, ReorgReasonKind, ReorgRpc, RpcEndpointClient, RpcFallbackClient,
+    RpcFallbackConfig, RpcFallbackOutcome, BPS_DENOMINATOR,
 };
 pub use refund::{prepare_refund, RefundData, RefundParams};
 pub use settlement::{

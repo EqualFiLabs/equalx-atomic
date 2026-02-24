@@ -2,7 +2,12 @@
 
 use std::collections::BTreeSet;
 
+use alloy_primitives::U256;
+
 use crate::error::{ErrorCode, Result};
+
+/// Canonical basis-points denominator.
+pub const BPS_DENOMINATOR: u16 = 10_000;
 
 /// EIP-1559 fee parameters used by transaction submission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +92,19 @@ fn scale_by_bps(value: u128, bps: u16) -> u128 {
 fn apply_percent_bump(value: u128, percent: u16) -> u128 {
     let delta = value.saturating_mul(percent as u128).saturating_add(99) / 100;
     value.saturating_add(delta)
+}
+
+/// Compute minimum acceptable settlement amount from expected output and slippage policy.
+///
+/// Uses floor rounding:
+/// `min_received = expected_out * (10_000 - slippage_bps) / 10_000`.
+pub fn min_received_with_slippage(expected_out: U256, slippage_bps: u16) -> Result<U256> {
+    if slippage_bps > BPS_DENOMINATOR {
+        return Err(ErrorCode::PolicySlippageBps);
+    }
+    let keep_bps = U256::from((BPS_DENOMINATOR - slippage_bps) as u64);
+    let denominator = U256::from(BPS_DENOMINATOR as u64);
+    Ok(expected_out.saturating_mul(keep_bps) / denominator)
 }
 
 /// Confirmation policy for finalizing EVM transactions.
@@ -389,6 +407,30 @@ mod tests {
             detect_reorg(&expected, Some(&observed)),
             Some(ReorgReason::BlockHashChanged { .. })
         ));
+    }
+
+    #[test]
+    fn min_received_helper_computes_floor_and_bounds() {
+        let expected = U256::from(1_000u64);
+        assert_eq!(
+            min_received_with_slippage(expected, 0).expect("no slippage"),
+            U256::from(1_000u64)
+        );
+        assert_eq!(
+            min_received_with_slippage(expected, 100).expect("1% slippage"),
+            U256::from(990u64)
+        );
+        assert_eq!(
+            min_received_with_slippage(expected, BPS_DENOMINATOR).expect("100% slippage"),
+            U256::ZERO
+        );
+    }
+
+    #[test]
+    fn min_received_helper_rejects_invalid_slippage_bps() {
+        let err = min_received_with_slippage(U256::from(1_000u64), BPS_DENOMINATOR + 1)
+            .expect_err("invalid bps");
+        assert_eq!(err, ErrorCode::PolicySlippageBps);
     }
 
     #[derive(Clone)]

@@ -21,6 +21,8 @@ pub enum ErrorCode {
     PolicyDeadlineOrder = 4001,
     /// Settlement digest does not meet canonical requirements.
     PolicyDigestLength = 4002,
+    /// Slippage basis points are outside the supported 0..=10000 range.
+    PolicySlippageBps = 4003,
     /// Settlement context digest mismatch detected.
     SettlementDigestMismatch = 4101,
     /// Missing Monero transaction hash when required.
