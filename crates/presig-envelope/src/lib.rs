@@ -153,6 +153,8 @@ pub enum EnvelopeError {
     HkdfExpand,
     #[error("invalid envelope encoding")]
     InvalidEnvelope,
+    #[error("envelope version does not match context version")]
+    VersionMismatch,
     #[error("aead failure")]
     Aead,
 }
@@ -210,6 +212,9 @@ pub fn encrypt_presig(req: &EncryptRequest<'_>) -> Result<EncryptionOutput, Enve
 /// Decrypt an envelope, returning the plaintext and derived parts.
 pub fn decrypt_presig(req: &DecryptRequest<'_>) -> Result<DecryptionOutput, EnvelopeError> {
     validate_envelope_shape(req.envelope)?;
+    if req.envelope.version != req.context.version {
+        return Err(EnvelopeError::VersionMismatch);
+    }
     let maker_pub = PublicKey::from_sec1_bytes(&req.envelope.maker_eph_public)
         .map_err(|_| EnvelopeError::InvalidPublicKey)?;
     let taker_secret =
@@ -416,6 +421,83 @@ mod tests {
             context: ctx,
         });
         assert!(matches!(result, Err(EnvelopeError::Aead)));
+    }
+
+    #[test]
+    fn version_mismatch_should_fail_before_aead() {
+        let taker_secret = [0x23u8; 32];
+        let taker_sk = SecretKey::from_slice(&taker_secret).expect("taker secret");
+        let taker_pub = PublicKey::from_secret_scalar(&taker_sk.to_nonzero_scalar());
+        let mut taker_pub_bytes = [0u8; 33];
+        taker_pub_bytes.copy_from_slice(taker_pub.to_encoded_point(true).as_bytes());
+
+        let ctx = EnvelopeContext {
+            chain_id: 7,
+            escrow_address: [0x10; 20],
+            swap_id: [0x11; 32],
+            settle_digest: [0x12; 32],
+            m_digest: [0x13; 32],
+            maker_address: [0x14; 20],
+            taker_address: [0x15; 20],
+            version: 1,
+        };
+
+        let enc = encrypt_presig(&EncryptRequest {
+            taker_pubkey: &taker_pub_bytes,
+            maker_eph_secret: Some([0x31; 32]),
+            presig: b"payload",
+            context: ctx,
+        })
+        .expect("encrypt");
+
+        let mut mismatched_ctx = ctx;
+        mismatched_ctx.version = 2;
+        let result = decrypt_presig(&DecryptRequest {
+            taker_secret: &taker_secret,
+            envelope: &enc.envelope,
+            context: mismatched_ctx,
+        });
+        assert!(matches!(result, Err(EnvelopeError::VersionMismatch)));
+    }
+
+    #[test]
+    fn omitting_ephemeral_secret_uses_fresh_sender_key() {
+        let taker_secret = [0x44u8; 32];
+        let taker_sk = SecretKey::from_slice(&taker_secret).expect("taker secret");
+        let taker_pub = PublicKey::from_secret_scalar(&taker_sk.to_nonzero_scalar());
+        let mut taker_pub_bytes = [0u8; 33];
+        taker_pub_bytes.copy_from_slice(taker_pub.to_encoded_point(true).as_bytes());
+
+        let ctx = EnvelopeContext {
+            chain_id: 99,
+            escrow_address: [0x21; 20],
+            swap_id: [0x22; 32],
+            settle_digest: [0x23; 32],
+            m_digest: [0x24; 32],
+            maker_address: [0x25; 20],
+            taker_address: [0x26; 20],
+            version: 1,
+        };
+
+        let first = encrypt_presig(&EncryptRequest {
+            taker_pubkey: &taker_pub_bytes,
+            maker_eph_secret: None,
+            presig: b"same-payload",
+            context: ctx,
+        })
+        .expect("first encryption");
+        let second = encrypt_presig(&EncryptRequest {
+            taker_pubkey: &taker_pub_bytes,
+            maker_eph_secret: None,
+            presig: b"same-payload",
+            context: ctx,
+        })
+        .expect("second encryption");
+
+        assert_ne!(
+            first.envelope.maker_eph_public, second.envelope.maker_eph_public,
+            "fresh encryptions should use distinct ephemeral public keys"
+        );
     }
 
     #[test]

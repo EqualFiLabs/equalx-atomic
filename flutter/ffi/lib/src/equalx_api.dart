@@ -483,6 +483,7 @@ class EqualXApi {
       final ctxPtr = _bytesToNative(settlementCtx, arena, allowEmpty: false);
       final outPtr = arena.allocate<ffi.Uint8>(outputCapacity);
       final outLenPtr = arena.allocate<ffi.Uint32>(1);
+      outLenPtr.value = outputCapacity;
       _check(
         bindings.clsagMakePreSig(
           msgPtr,
@@ -499,6 +500,11 @@ class EqualXApi {
         'clsag_make_pre_sig',
       );
       final outLen = outLenPtr.value;
+      if (outLen > outputCapacity) {
+        throw StateError(
+          'clsag_make_pre_sig returned length $outLen beyond capacity $outputCapacity',
+        );
+      }
       return Uint8List.fromList(outPtr.asTypedList(outLen));
     } finally {
       arena.releaseAll();
@@ -528,6 +534,7 @@ class EqualXApi {
       final secretPtr = _bytesToNative(adaptorSecret, arena);
       final outPtr = arena.allocate<ffi.Uint8>(outputCapacity);
       final outLenPtr = arena.allocate<ffi.Uint32>(1);
+      outLenPtr.value = outputCapacity;
       _check(
         bindings.clsagComplete(
           prePtr,
@@ -540,6 +547,11 @@ class EqualXApi {
         'clsag_complete',
       );
       final outLen = outLenPtr.value;
+      if (outLen > outputCapacity) {
+        throw StateError(
+          'clsag_complete returned length $outLen beyond capacity $outputCapacity',
+        );
+      }
       return Uint8List.fromList(outPtr.asTypedList(outLen));
     } finally {
       arena.releaseAll();

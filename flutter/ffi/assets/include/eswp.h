@@ -276,8 +276,8 @@ int eswp_sign_evm_message(const unsigned char *priv_ptr,
 
 /// # Safety
 /// `msg_ptr`, `ring_ptr`, `swap_id_ptr`, and `ctx_ptr` must reference readable buffers of
-/// the stated lengths. `out_bytes` must point to a buffer large enough to receive the
-/// pre-signature bytes, and `out_len` must be writable.
+/// the stated lengths. `out_len` is an in/out pointer: initialize `*out_len` with the
+/// available capacity at `out_bytes`; on success it is replaced with the encoded length.
 int eswp_clsag_make_pre_sig(const unsigned char *msg_ptr,
                             unsigned int msg_len,
                             const unsigned char *ring_ptr,
@@ -291,8 +291,9 @@ int eswp_clsag_make_pre_sig(const unsigned char *msg_ptr,
 
 /// # Safety
 /// All pointer arguments must be non-null, with `pre_ptr` and `secret_ptr`
-/// referencing readable buffers of the stated lengths, and `out_ptr`/`out_len`
-/// writable for the produced signature bytes and length.
+/// referencing readable buffers of the stated lengths. `out_len` is in/out:
+/// initialize `*out_len` with the `out_ptr` capacity; on success it is replaced
+/// with the produced signature length.
 int eswp_clsag_complete(const unsigned char *pre_ptr,
                         unsigned int pre_len,
                         const unsigned char *secret_ptr,

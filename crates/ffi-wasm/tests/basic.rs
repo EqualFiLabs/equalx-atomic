@@ -1,7 +1,7 @@
-use adaptor_clsag::wire::ClsagFinalSigContainer;
+use adaptor_clsag::wire::{ClsagFinalSigContainer, ClsagPreSig, MAGIC_CLSAG_PRESIG};
 use adaptor_clsag::{
     complete as adaptor_complete, make_pre_sig as adaptor_make_pre_sig, ClsagCtx, SettlementCtx,
-    SignerWitness, SAMPLE_RING_COMMITMENTS, SAMPLE_RING_KEYS,
+    SignerWitness, BACKEND_ID_CLSAG, SAMPLE_RING_COMMITMENTS, SAMPLE_RING_KEYS, WIRE_VERSION,
 };
 use ffi_wasm::{
     eswp_clsag_complete_js, eswp_clsag_extract_t_js, eswp_clsag_make_pre_sig_js,
@@ -50,11 +50,10 @@ fn encode_ctx_bytes(ctx: &SettlementCtx) -> Vec<u8> {
     out
 }
 
-fn encode_ring_bytes(ctx: &ClsagCtx) -> Vec<u8> {
+fn encode_ring_keys_only(ctx: &ClsagCtx) -> Vec<u8> {
     ctx.ring_keys
         .iter()
-        .zip(ctx.ring_commitments.iter())
-        .flat_map(|(k, c)| k.iter().chain(c.iter()).copied())
+        .flat_map(|key| key.iter().copied())
         .collect()
 }
 
@@ -74,17 +73,65 @@ fn decode_final_bytes(bytes: &[u8], decoys: usize) -> (ClsagFinalSigContainer, C
     (container, clsag, pseudo_out)
 }
 
+fn encode_pre_bytes_for_test(
+    msg: &[u8],
+    ctx: &ClsagCtx,
+    pre: &adaptor_clsag::PreSig,
+    swap_id: &[u8; 32],
+    legacy_tau: Option<&[u8; 32]>,
+) -> Vec<u8> {
+    let ring_size = u8::try_from(ctx.n).expect("ring size fits u8");
+    let ring_bytes: Vec<u8> = ctx.ring_keys.iter().flat_map(|key| key.to_vec()).collect();
+
+    let commitments_len = u32::try_from(ctx.ring_commitments.len()).expect("commitments fit u32");
+    let responses_len = u32::try_from(pre.s_tilde.len()).expect("responses fit u32");
+
+    let mut proof = Vec::new();
+    proof.extend_from_slice(swap_id);
+    proof.extend_from_slice(&ctx.key_image);
+    proof.extend_from_slice(&commitments_len.to_le_bytes());
+    for commitment in &ctx.ring_commitments {
+        proof.extend_from_slice(commitment);
+    }
+    proof.extend_from_slice(&pre.c1_tilde);
+    proof.extend_from_slice(&pre.d_tilde);
+    proof.extend_from_slice(&pre.pseudo_out);
+    proof.extend_from_slice(&responses_len.to_le_bytes());
+    for response in &pre.s_tilde {
+        proof.extend_from_slice(response);
+    }
+    if let Some(tau) = legacy_tau {
+        proof.extend_from_slice(&(32u32).to_le_bytes());
+        proof.extend_from_slice(tau);
+    }
+
+    let container = ClsagPreSig {
+        magic: MAGIC_CLSAG_PRESIG,
+        wire_version: WIRE_VERSION,
+        backend: BACKEND_ID_CLSAG,
+        ring_size,
+        resp_index: u8::try_from(pre.j).expect("response index fits u8"),
+        reserved0: 0,
+        m: msg.to_vec(),
+        ring_bytes,
+        pre_hash: pre.pre_hash,
+        ctx: pre.ctx.clone(),
+        proof_bytes_sans_resp: proof,
+    };
+    container.encode().expect("encode test presig")
+}
+
 #[wasm_bindgen_test]
 fn wire_version_exposed() {
     assert!(eswp_wire_version_js() > 0);
 }
 
 #[wasm_bindgen_test]
-fn clsag_complete_and_extract_roundtrip_via_js_exports() {
+fn make_pre_sig_uses_entropy_and_omits_tau() {
     let (ctx, settlement, witness, message, swap_id) = sample_fixture();
-    let ring_bytes = encode_ring_bytes(&ctx);
+    let ring_bytes = encode_ring_keys_only(&ctx);
     let ctx_bytes = encode_ctx_bytes(&settlement);
-    let pre_bytes = eswp_clsag_make_pre_sig_js(
+    let pre_a = eswp_clsag_make_pre_sig_js(
         &message,
         &ring_bytes,
         witness.i_star as u32,
@@ -92,9 +139,32 @@ fn clsag_complete_and_extract_roundtrip_via_js_exports() {
         &ctx_bytes,
     )
     .expect("js presig builder");
+    let pre_b = eswp_clsag_make_pre_sig_js(
+        &message,
+        &ring_bytes,
+        witness.i_star as u32,
+        &swap_id,
+        &ctx_bytes,
+    )
+    .expect("js presig builder");
+    assert_ne!(pre_a, pre_b, "presig output must not be deterministic");
 
+    let container = ClsagPreSig::decode(&pre_a).expect("decode generated presig");
+    let expected_proof_len =
+        32 + 32 + 4 + (ctx.ring_commitments.len() * 32) + 32 + 32 + 32 + 4 + (ctx.n * 32);
+    assert_eq!(
+        container.proof_bytes_sans_resp.len(),
+        expected_proof_len,
+        "presig proof must omit embedded tau"
+    );
+}
+
+#[wasm_bindgen_test]
+fn clsag_complete_and_extract_roundtrip_via_js_exports() {
+    let (ctx, settlement, witness, message, swap_id) = sample_fixture();
     let (pre, tau) =
         adaptor_make_pre_sig(&ctx, &witness, &message, &swap_id, settlement.clone()).unwrap();
+    let pre_bytes = encode_pre_bytes_for_test(&message, &ctx, &pre, &swap_id, None);
     let final_bytes = eswp_clsag_complete_js(&pre_bytes, &tau).expect("js completion");
     let (container, clsag_from_js, pseudo_out) = decode_final_bytes(&final_bytes, ctx.n as usize);
 
@@ -123,4 +193,18 @@ fn clsag_complete_and_extract_roundtrip_via_js_exports() {
 
     let extracted = eswp_clsag_extract_t_js(&pre_bytes, &final_bytes).expect("js tau extraction");
     assert_eq!(extracted, tau);
+}
+
+#[wasm_bindgen_test]
+fn clsag_complete_accepts_legacy_pre_payload() {
+    let (ctx, settlement, witness, message, swap_id) = sample_fixture();
+    let (pre, tau) =
+        adaptor_make_pre_sig(&ctx, &witness, &message, &swap_id, settlement.clone()).unwrap();
+    let legacy_pre = encode_pre_bytes_for_test(&message, &ctx, &pre, &swap_id, Some(&tau));
+
+    let secret = [0x5Au8; 32];
+    let final_bytes = eswp_clsag_complete_js(&legacy_pre, &secret).expect("complete legacy");
+    let extracted =
+        eswp_clsag_extract_t_js(&legacy_pre, &final_bytes).expect("extract from legacy payload");
+    assert_eq!(extracted, secret);
 }

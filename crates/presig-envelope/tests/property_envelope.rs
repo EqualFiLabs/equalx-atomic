@@ -281,7 +281,10 @@ proptest! {
             envelope: &encrypted.envelope,
             context: wrong_context,
         });
-        prop_assert!(matches!(result, Err(EnvelopeError::Aead)));
+        prop_assert!(matches!(
+            result,
+            Err(EnvelopeError::Aead | EnvelopeError::VersionMismatch)
+        ));
     }
 
     /// Requirement 5.2: AAD formula binding contract.

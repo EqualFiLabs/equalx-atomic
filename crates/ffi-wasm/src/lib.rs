@@ -28,6 +28,7 @@ use equalx_sdk::{
 use monero_oxide::ringct::clsag::Clsag;
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
 use wasm_bindgen::prelude::*;
 
@@ -194,17 +195,25 @@ fn decode_sdk_settlement_ctx(bytes: &[u8]) -> Result<SdkSettlementCtx, WasmError
         .map_err(WasmError::from)
 }
 
-fn derive_witness(i_star: usize) -> SignerWitness {
-    let mut x = [0u8; 32];
-    x[..8].copy_from_slice(&((i_star + 1) as u64).to_le_bytes());
-    let mut mask = [0u8; 32];
-    mask[..8].copy_from_slice(&((i_star + 1) as u64).to_le_bytes());
-    SignerWitness {
+fn random_nonzero_scalar_bytes() -> Result<[u8; 32], WasmError> {
+    for _ in 0..8 {
+        let (scalar, _) = sdk_generate_monero_keypair().map_err(WasmError::from)?;
+        if scalar.iter().any(|&byte| byte != 0) {
+            return Ok(scalar);
+        }
+    }
+    Err(wasm_err("failed to sample non-zero scalar"))
+}
+
+fn derive_witness(i_star: usize) -> Result<SignerWitness, WasmError> {
+    let x = random_nonzero_scalar_bytes()?;
+    let mask = random_nonzero_scalar_bytes()?;
+    Ok(SignerWitness {
         x,
         mask,
         amount: 0,
         i_star,
-    }
+    })
 }
 
 fn take_array<const N: usize>(bytes: &[u8], cursor: &mut usize) -> Result<[u8; N], WasmError> {
@@ -236,7 +245,6 @@ fn encode_pre_bytes(
     ctx: &ClsagCtx,
     pre: &PreSig,
     swap_id: &[u8; 32],
-    tau: &[u8; 32],
 ) -> Result<Vec<u8>, WasmError> {
     let ring_size = u8::try_from(ctx.n).map_err(|_| wasm_err("ring size exceeds u8"))?;
     let ring_bytes: Vec<u8> = ctx.ring_keys.iter().flat_map(|key| key.to_vec()).collect();
@@ -260,8 +268,6 @@ fn encode_pre_bytes(
     for response in &pre.s_tilde {
         proof.extend_from_slice(response);
     }
-    proof.extend_from_slice(&(ADAPTOR_SCALAR_LEN as u32).to_le_bytes());
-    proof.extend_from_slice(tau);
 
     let presig = ClsagPreSig {
         magic: adaptor_clsag::wire::MAGIC_CLSAG_PRESIG,
@@ -341,11 +347,13 @@ fn decode_pre_bytes(bytes: &[u8]) -> Result<DecodedPre, WasmError> {
     for _ in 0..responses_len {
         s_tilde.push(take_array::<32>(proof, &mut cursor)?);
     }
-    let tau_length = read_u32(proof, &mut cursor)?;
-    if tau_length != ADAPTOR_SCALAR_LEN as u32 {
-        return Err(WasmError::Length);
+    if cursor < proof.len() {
+        let tau_length = read_u32(proof, &mut cursor)?;
+        if tau_length != ADAPTOR_SCALAR_LEN as u32 {
+            return Err(WasmError::Length);
+        }
+        let _legacy_tau = take_array::<32>(proof, &mut cursor)?;
     }
-    let _tau = take_array::<32>(proof, &mut cursor)?;
     if cursor != proof.len() {
         return Err(WasmError::Decode);
     }
@@ -724,7 +732,7 @@ pub fn eswp_clsag_make_pre_sig_js(
     let mut swap_id_bytes = [0u8; 32];
     swap_id_bytes.copy_from_slice(swap_id);
 
-    let witness = derive_witness(i_star);
+    let witness = derive_witness(i_star)?;
     let key_image = witness.key_image_bytes();
     let clsag_ctx = ClsagCtx {
         ring_keys,
@@ -733,10 +741,16 @@ pub fn eswp_clsag_make_pre_sig_js(
         n: ring_size,
     };
 
-    let (pre, tau) = adaptor_make_pre_sig(&clsag_ctx, &witness, msg, &swap_id_bytes, sctx)
-        .map_err(WasmError::from)?;
+    let presig_result = panic::catch_unwind(AssertUnwindSafe(|| {
+        adaptor_make_pre_sig(&clsag_ctx, &witness, msg, &swap_id_bytes, sctx)
+    }));
+    let (pre, _tau) = match presig_result {
+        Ok(Ok(value)) => value,
+        Ok(Err(err)) => return Err(WasmError::from(err).into()),
+        Err(_) => return Err(wasm_err("presig generation panicked").into()),
+    };
 
-    encode_pre_bytes(msg, &clsag_ctx, &pre, &swap_id_bytes, &tau).map_err(Into::into)
+    encode_pre_bytes(msg, &clsag_ctx, &pre, &swap_id_bytes).map_err(Into::into)
 }
 
 #[wasm_bindgen]

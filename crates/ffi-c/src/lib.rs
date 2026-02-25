@@ -655,17 +655,25 @@ fn decode_sdk_settlement_ctx(bytes: &[u8]) -> Result<SdkSettlementCtx, FfiError>
         .map_err(FfiError::from)
 }
 
-fn derive_witness(i_star: usize) -> SignerWitness {
-    let mut x = [0u8; 32];
-    x[..8].copy_from_slice(&((i_star + 1) as u64).to_le_bytes());
-    let mut mask = [0u8; 32];
-    mask[..8].copy_from_slice(&((i_star + 1) as u64).to_le_bytes());
-    SignerWitness {
+fn random_nonzero_scalar_bytes() -> Result<[u8; 32], FfiError> {
+    for _ in 0..8 {
+        let (scalar, _) = sdk_generate_monero_keypair().map_err(FfiError::from)?;
+        if scalar.iter().any(|&byte| byte != 0) {
+            return Ok(scalar);
+        }
+    }
+    Err(FfiError::InternalPanic)
+}
+
+fn derive_witness(i_star: usize) -> Result<SignerWitness, FfiError> {
+    let x = random_nonzero_scalar_bytes()?;
+    let mask = random_nonzero_scalar_bytes()?;
+    Ok(SignerWitness {
         x,
         mask,
         amount: 0,
         i_star,
-    }
+    })
 }
 
 fn take_array<const N: usize>(bytes: &[u8], cursor: &mut usize) -> Result<[u8; N], FfiError> {
@@ -688,7 +696,6 @@ fn encode_pre_bytes(
     ctx: &ClsagCtx,
     pre: &PreSig,
     swap_id: &[u8; 32],
-    tau: &[u8; 32],
 ) -> Result<Vec<u8>, FfiError> {
     let ring_size = u8::try_from(ctx.n).map_err(|_| FfiError::RingSizeUnsupported)?;
     let ring_bytes: Vec<u8> = ctx.ring_keys.iter().flat_map(|key| key.to_vec()).collect();
@@ -711,8 +718,6 @@ fn encode_pre_bytes(
     for response in &pre.s_tilde {
         proof.extend_from_slice(response);
     }
-    proof.extend_from_slice(&(ADAPTOR_SCALAR_LEN as u32).to_le_bytes());
-    proof.extend_from_slice(tau);
 
     let presig = ClsagPreSig {
         magic: adaptor_clsag::wire::MAGIC_CLSAG_PRESIG,
@@ -777,11 +782,13 @@ fn decode_pre_bytes(bytes: &[u8]) -> Result<DecodedPre, FfiError> {
     for _ in 0..responses_len {
         s_tilde.push(take_array::<32>(proof, &mut cursor)?);
     }
-    let tau_length = read_u32(proof, &mut cursor)?;
-    if tau_length != ADAPTOR_SCALAR_LEN as u32 {
-        return Err(FfiError::LengthInvalid);
+    if cursor < proof.len() {
+        let tau_length = read_u32(proof, &mut cursor)?;
+        if tau_length != ADAPTOR_SCALAR_LEN as u32 {
+            return Err(FfiError::LengthInvalid);
+        }
+        let _legacy_tau = take_array::<32>(proof, &mut cursor)?;
     }
-    let _tau = take_array::<32>(proof, &mut cursor)?;
     if cursor != proof.len() {
         return Err(FfiError::Decode);
     }
@@ -1908,8 +1915,8 @@ pub unsafe extern "C" fn eswp_sign_evm_message(
 #[no_mangle]
 /// # Safety
 /// `msg_ptr`, `ring_ptr`, `swap_id_ptr`, and `ctx_ptr` must reference readable buffers of
-/// the stated lengths. `out_bytes` must point to a buffer large enough to receive the
-/// pre-signature bytes, and `out_len` must be writable.
+/// the stated lengths. `out_len` is an in/out pointer: initialize `*out_len` with the
+/// available capacity at `out_bytes`; on success it is replaced with the encoded length.
 pub unsafe extern "C" fn eswp_clsag_make_pre_sig(
     msg_ptr: *const c_uchar,
     msg_len: c_uint,
@@ -1957,7 +1964,10 @@ pub unsafe extern "C" fn eswp_clsag_make_pre_sig(
         Err(err) => return err.code(),
     };
 
-    let witness = derive_witness(i_star);
+    let witness = match derive_witness(i_star) {
+        Ok(witness) => witness,
+        Err(err) => return err.code(),
+    };
     let key_image = witness.key_image_bytes();
     let clsag_ctx = ClsagCtx {
         ring_keys,
@@ -1966,15 +1976,27 @@ pub unsafe extern "C" fn eswp_clsag_make_pre_sig(
         n: ring_size,
     };
 
-    let (pre, tau) = match adaptor_make_pre_sig(&clsag_ctx, &witness, msg, &swap_id_bytes, sctx) {
-        Ok(value) => value,
-        Err(err) => return FfiError::from(err).code(),
+    let presig_result = panic::catch_unwind(AssertUnwindSafe(|| {
+        adaptor_make_pre_sig(&clsag_ctx, &witness, msg, &swap_id_bytes, sctx)
+    }));
+    let (pre, _tau) = match presig_result {
+        Ok(Ok(value)) => value,
+        Ok(Err(err)) => return FfiError::from(err).code(),
+        Err(_) => return FfiError::InternalPanic.code(),
     };
 
-    let encoded = match encode_pre_bytes(msg, &clsag_ctx, &pre, &swap_id_bytes, &tau) {
+    let encoded = match encode_pre_bytes(msg, &clsag_ctx, &pre, &swap_id_bytes) {
         Ok(bytes) => bytes,
         Err(err) => return err.code(),
     };
+
+    let out_capacity = unsafe { *out_len as usize };
+    if encoded.len() > out_capacity {
+        unsafe {
+            *out_len = encoded.len() as c_uint;
+        }
+        return FfiError::CapacityInsufficient.code();
+    }
 
     unsafe {
         *out_len = encoded.len() as c_uint;
@@ -1987,8 +2009,9 @@ pub unsafe extern "C" fn eswp_clsag_make_pre_sig(
 #[no_mangle]
 /// # Safety
 /// All pointer arguments must be non-null, with `pre_ptr` and `secret_ptr`
-/// referencing readable buffers of the stated lengths, and `out_ptr`/`out_len`
-/// writable for the produced signature bytes and length.
+/// referencing readable buffers of the stated lengths. `out_len` is in/out:
+/// initialize `*out_len` with the `out_ptr` capacity; on success it is replaced
+/// with the produced signature length.
 pub unsafe extern "C" fn eswp_clsag_complete(
     pre_ptr: *const c_uchar,
     pre_len: c_uint,
@@ -2020,6 +2043,14 @@ pub unsafe extern "C" fn eswp_clsag_complete(
         Ok(bytes) => bytes,
         Err(err) => return err.code(),
     };
+
+    let out_capacity = unsafe { *out_len as usize };
+    if encoded.len() > out_capacity {
+        unsafe {
+            *out_len = encoded.len() as c_uint;
+        }
+        return FfiError::CapacityInsufficient.code();
+    }
 
     unsafe {
         *out_len = encoded.len() as c_uint;
@@ -2309,11 +2340,11 @@ mod tests {
         let (pre, tau) =
             adaptor_make_pre_sig(&ctx, &witness, &message, &swap_id, settlement.clone()).unwrap();
         let final_sig = adaptor_complete(&pre, &tau);
-        let pre_bytes = encode_pre_bytes(&message, &ctx, &pre, &swap_id, &tau).unwrap();
+        let pre_bytes = encode_pre_bytes(&message, &ctx, &pre, &swap_id).unwrap();
         let expected_final = encode_final_bytes(&pre, &final_sig).unwrap();
 
         let mut out_buf = vec![0u8; expected_final.len() + 16];
-        let mut out_len: c_uint = 0;
+        let mut out_len: c_uint = out_buf.len() as c_uint;
         let rc = unsafe {
             eswp_clsag_complete(
                 pre_bytes.as_ptr(),
@@ -2340,6 +2371,95 @@ mod tests {
         };
         assert_eq!(rc, 0, "eswp_clsag_extract_t should succeed");
         assert_eq!(recovered, tau);
+    }
+
+    #[test]
+    fn derive_witness_uses_runtime_entropy() {
+        let first = derive_witness(1).expect("first witness");
+        let second = derive_witness(1).expect("second witness");
+        assert_ne!(
+            first.x, second.x,
+            "witness secret scalar must not be deterministic"
+        );
+        assert_ne!(
+            first.mask, second.mask,
+            "witness mask scalar must not be deterministic"
+        );
+    }
+
+    #[test]
+    fn pre_encoding_omits_tau_and_accepts_legacy_payload() {
+        let (ctx, settlement, witness, message, swap_id) = sample_fixture();
+        let (pre, tau) =
+            adaptor_make_pre_sig(&ctx, &witness, &message, &swap_id, settlement).unwrap();
+        let pre_bytes = encode_pre_bytes(&message, &ctx, &pre, &swap_id).expect("encode presig");
+        let decoded = ClsagPreSig::decode(&pre_bytes).expect("decode presig container");
+
+        let expected_proof_len = 32
+            + 32
+            + 4
+            + (ctx.ring_commitments.len() * 32)
+            + 32
+            + 32
+            + 32
+            + 4
+            + (pre.s_tilde.len() * 32);
+        assert_eq!(
+            decoded.proof_bytes_sans_resp.len(),
+            expected_proof_len,
+            "pre payload should not carry tau"
+        );
+
+        let mut legacy = decoded;
+        legacy
+            .proof_bytes_sans_resp
+            .extend_from_slice(&(ADAPTOR_SCALAR_LEN as u32).to_le_bytes());
+        legacy.proof_bytes_sans_resp.extend_from_slice(&tau);
+        let legacy_bytes = legacy.encode().expect("encode legacy payload");
+        let decoded_legacy = decode_pre_bytes(&legacy_bytes).expect("decode legacy payload");
+        assert_eq!(decoded_legacy.pre.pre_hash, pre.pre_hash);
+        assert_eq!(decoded_legacy.pre.j, pre.j);
+    }
+
+    #[test]
+    fn clsag_complete_reports_capacity_requirement() {
+        let (ctx, settlement, witness, message, swap_id) = sample_fixture();
+        let (pre, tau) =
+            adaptor_make_pre_sig(&ctx, &witness, &message, &swap_id, settlement.clone()).unwrap();
+        let pre_bytes = encode_pre_bytes(&message, &ctx, &pre, &swap_id).expect("encode presig");
+        let final_sig = adaptor_complete(&pre, &tau);
+        let expected_final = encode_final_bytes(&pre, &final_sig).expect("encode final");
+
+        let mut tiny = [0u8; 8];
+        let mut out_len: c_uint = tiny.len() as c_uint;
+        let rc = unsafe {
+            eswp_clsag_complete(
+                pre_bytes.as_ptr(),
+                pre_bytes.len() as c_uint,
+                tau.as_ptr(),
+                tau.len() as c_uint,
+                tiny.as_mut_ptr(),
+                &mut out_len,
+            )
+        };
+        assert_eq!(rc, FfiError::CapacityInsufficient.code());
+        assert_eq!(out_len as usize, expected_final.len());
+
+        let mut out_buf = vec![0u8; out_len as usize];
+        let mut retry_len = out_buf.len() as c_uint;
+        let retry = unsafe {
+            eswp_clsag_complete(
+                pre_bytes.as_ptr(),
+                pre_bytes.len() as c_uint,
+                tau.as_ptr(),
+                tau.len() as c_uint,
+                out_buf.as_mut_ptr(),
+                &mut retry_len,
+            )
+        };
+        assert_eq!(retry, 0);
+        assert_eq!(retry_len as usize, expected_final.len());
+        assert_eq!(&out_buf[..retry_len as usize], expected_final.as_slice());
     }
 
     #[derive(Default)]

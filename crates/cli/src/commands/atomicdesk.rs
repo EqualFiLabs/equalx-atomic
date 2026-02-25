@@ -157,8 +157,9 @@ pub struct TxProofArgs {
     monero_tx_id: String,
     #[arg(long, value_name = "HEX33")]
     desk_pubkey: String,
-    #[arg(long, value_name = "HEX32")]
-    taker_secret: String,
+    /// Optional one-time sender secret. Omit to use a random ephemeral key.
+    #[arg(long = "taker-ephemeral", alias = "taker-secret", value_name = "HEX32")]
+    taker_ephemeral: Option<String>,
     /// Optional extra metadata (hex-encoded bytes)
     #[arg(long, value_name = "HEX")]
     extra: Option<String>,
@@ -409,7 +410,11 @@ fn handle_txproof(opts: TxProofArgs) -> Result<()> {
         Vec::new()
     };
     let desk_pub = parse_hex_array::<33>(&opts.desk_pubkey, "desk_pubkey")?;
-    let taker_secret = parse_hex_array::<32>(&opts.taker_secret, "taker_secret")?;
+    let taker_ephemeral = opts
+        .taker_ephemeral
+        .as_deref()
+        .map(|value| parse_hex_array::<32>(value, "taker_ephemeral"))
+        .transpose()?;
     let context = opts.context.to_context()?;
     let plaintext = TxProofEnvelope {
         reservationId: reservation_id,
@@ -418,7 +423,7 @@ fn handle_txproof(opts: TxProofArgs) -> Result<()> {
     };
     let envelope = encrypt_presig(&EncryptRequest {
         taker_pubkey: &desk_pub,
-        maker_eph_secret: Some(taker_secret),
+        maker_eph_secret: taker_ephemeral,
         presig: &plaintext.abi_encode(),
         context,
     })?;
