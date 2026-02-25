@@ -69,7 +69,6 @@ fn publish_presig_no_broadcast_emits_envelope() {
 #[test]
 fn tx_proof_dry_run_prints_context() {
     let desk_pub = sample_pubkey(0x22);
-    let taker_secret = format!("0x{}", "bb".repeat(32));
     let mut args = vec![
         "atomic-desk".into(),
         "tx-proof".into(),
@@ -77,8 +76,6 @@ fn tx_proof_dry_run_prints_context() {
         "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
         "--desk-pubkey".into(),
         desk_pub,
-        "--taker-secret".into(),
-        taker_secret,
         "--mailbox".into(),
         "0x0000000000000000000000000000000000000200".into(),
         "--dry-run".into(),

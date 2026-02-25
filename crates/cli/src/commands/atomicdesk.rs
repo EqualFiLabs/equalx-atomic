@@ -86,9 +86,6 @@ pub struct EncryptArgs {
     /// Hex-encoded 33-byte taker pubkey.
     #[arg(long, value_name = "HEX33")]
     taker_pubkey: String,
-    /// Optional 32-byte maker ephemeral secret key (hex). Random if omitted.
-    #[arg(long, value_name = "HEX32")]
-    maker_ephemeral: Option<String>,
     /// Hex string of presig bytes.
     #[arg(long, value_name = "HEX", group = "presig_source")]
     presig_hex: Option<String>,
@@ -117,9 +114,6 @@ pub struct PublishArgs {
     /// Hex-encoded 33-byte taker pubkey.
     #[arg(long, value_name = "HEX33")]
     taker_pubkey: String,
-    /// Optional 32-byte maker ephemeral secret key (hex). Random if omitted.
-    #[arg(long, value_name = "HEX32")]
-    maker_ephemeral: Option<String>,
     /// Hex string of presig bytes.
     #[arg(long, value_name = "HEX", group = "publish_presig")]
     presig_hex: Option<String>,
@@ -157,9 +151,6 @@ pub struct TxProofArgs {
     monero_tx_id: String,
     #[arg(long, value_name = "HEX33")]
     desk_pubkey: String,
-    /// Optional one-time sender secret. Omit to use a random ephemeral key.
-    #[arg(long = "taker-ephemeral", alias = "taker-secret", value_name = "HEX32")]
-    taker_ephemeral: Option<String>,
     /// Optional extra metadata (hex-encoded bytes)
     #[arg(long, value_name = "HEX")]
     extra: Option<String>,
@@ -302,15 +293,9 @@ impl PresigSource {
 fn handle_encrypt(opts: EncryptArgs) -> Result<()> {
     let context = opts.context.to_context()?;
     let taker_pub = parse_hex_array::<33>(&opts.taker_pubkey, "taker_pubkey")?;
-    let maker_secret = if let Some(ref hex) = opts.maker_ephemeral {
-        Some(parse_hex_array::<32>(hex, "maker_ephemeral")?)
-    } else {
-        None
-    };
     let presig = read_presig(&PresigSource::from_encrypt(&opts))?;
     let req = EncryptRequest {
         taker_pubkey: &taker_pub,
-        maker_eph_secret: maker_secret,
         presig: &presig,
         context,
     };
@@ -347,15 +332,9 @@ fn handle_encrypt(opts: EncryptArgs) -> Result<()> {
 fn handle_publish_presig(opts: PublishArgs) -> Result<()> {
     let context = opts.context.to_context()?;
     let taker_pub = parse_hex_array::<33>(&opts.taker_pubkey, "taker_pubkey")?;
-    let maker_secret = if let Some(ref hex) = opts.maker_ephemeral {
-        Some(parse_hex_array::<32>(hex, "maker_ephemeral")?)
-    } else {
-        None
-    };
     let presig = read_presig(&PresigSource::from_publish(&opts))?;
     let req = EncryptRequest {
         taker_pubkey: &taker_pub,
-        maker_eph_secret: maker_secret,
         presig: &presig,
         context,
     };
@@ -410,11 +389,6 @@ fn handle_txproof(opts: TxProofArgs) -> Result<()> {
         Vec::new()
     };
     let desk_pub = parse_hex_array::<33>(&opts.desk_pubkey, "desk_pubkey")?;
-    let taker_ephemeral = opts
-        .taker_ephemeral
-        .as_deref()
-        .map(|value| parse_hex_array::<32>(value, "taker_ephemeral"))
-        .transpose()?;
     let context = opts.context.to_context()?;
     let plaintext = TxProofEnvelope {
         reservationId: reservation_id,
@@ -423,7 +397,6 @@ fn handle_txproof(opts: TxProofArgs) -> Result<()> {
     };
     let envelope = encrypt_presig(&EncryptRequest {
         taker_pubkey: &desk_pub,
-        maker_eph_secret: taker_ephemeral,
         presig: &plaintext.abi_encode(),
         context,
     })?;

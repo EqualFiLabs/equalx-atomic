@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use equalx_error::{AdapterError, ErrorCode};
 use host_adapter::{Chain, HostAdapters, SwapLifecycleEvent, SwapOutcome};
 use serde::{Deserialize, Serialize};
+use sha3::{Digest, Keccak256};
 
 pub type ReservationId = [u8; 32];
 
@@ -42,6 +43,11 @@ pub enum MakerState {
     },
     Refunded {
         reservation_id: ReservationId,
+    },
+    RefundPending {
+        reservation_id: ReservationId,
+        deadline: u64,
+        refund_tx: [u8; 32],
     },
     Failed {
         reservation_id: ReservationId,
@@ -81,6 +87,11 @@ pub enum TakerState {
     },
     Refunded {
         reservation_id: ReservationId,
+    },
+    RefundPending {
+        reservation_id: ReservationId,
+        deadline: u64,
+        refund_tx: [u8; 32],
     },
     Failed {
         reservation_id: ReservationId,
@@ -528,7 +539,11 @@ impl<A: HostAdapters> SwapOrchestrator<A> {
         )
     }
 
-    pub fn maker_handle_final_sig(&self, reservation_id: ReservationId) -> Result<()> {
+    pub fn maker_handle_final_sig(
+        &self,
+        reservation_id: ReservationId,
+        monero_tx_id: [u8; 32],
+    ) -> Result<()> {
         let mut swaps = self.swaps.lock().expect("mutex poisoned");
         let runtime = swaps
             .get_mut(&reservation_id)
@@ -565,7 +580,36 @@ impl<A: HostAdapters> SwapOrchestrator<A> {
             );
             return Err(self.wrap_adapter("maker_handle_final_sig/node_health", err));
         }
-        let monero_tx_id = derive_tagged_hash(reservation_id, b"monero-final");
+        if monero_tx_id == [0u8; 32] {
+            return Err(self.wrap_adapter(
+                "maker_handle_final_sig/monero_tx_id",
+                AdapterError::new(
+                    ErrorCode::AdapterCallFailed,
+                    "final signature evidence contained zero monero tx id",
+                ),
+            ));
+        }
+        let confirmations = match self.adapters.get_tx_confirmations(&monero_tx_id) {
+            Ok(confirmations) => confirmations,
+            Err(err) => {
+                self.fail_swap(
+                    reservation_id,
+                    runtime,
+                    "maker_handle_final_sig/get_tx_confirmations",
+                    err.clone(),
+                );
+                return Err(self.wrap_adapter("maker_handle_final_sig/get_tx_confirmations", err));
+            }
+        };
+        if confirmations.is_none() {
+            return Err(self.wrap_adapter(
+                "maker_handle_final_sig/get_tx_confirmations",
+                AdapterError::new(
+                    ErrorCode::AdapterCallFailed,
+                    "monero tx id from final signature evidence is unknown to monero node",
+                ),
+            ));
+        }
         let next = SwapState::Maker(MakerState::FinalSigReceived {
             reservation_id,
             monero_tx_id,
@@ -1039,7 +1083,11 @@ impl<A: HostAdapters> SwapOrchestrator<A> {
                             reservation_id,
                             deadline,
                         });
-                        let next = SwapState::Maker(MakerState::Refunded { reservation_id });
+                        let next = SwapState::Maker(MakerState::RefundPending {
+                            reservation_id,
+                            deadline,
+                            refund_tx: tx_hash,
+                        });
                         self.transition(
                             reservation_id,
                             runtime,
@@ -1047,10 +1095,70 @@ impl<A: HostAdapters> SwapOrchestrator<A> {
                             Some(SideEffectRecord {
                                 kind: SideEffectKind::EvmTxSubmitted,
                                 tx_hash: Some(tx_hash),
-                                completed: true,
+                                completed: false,
                             }),
                         )?;
                     }
+                }
+                SwapState::Maker(MakerState::RefundPending {
+                    deadline,
+                    refund_tx,
+                    ..
+                }) => {
+                    let receipt = self.adapters.get_receipt(refund_tx).map_err(|err| {
+                        self.wrap_adapter("check_deadlines/maker_refund/get_receipt", err)
+                    })?;
+                    let Some(receipt) = receipt else {
+                        continue;
+                    };
+                    if !receipt.success {
+                        let tx_payload = command_payload("maker_refund", reservation_id, None);
+                        let tx_hash = self.adapters.send_raw_tx(&tx_payload).map_err(|err| {
+                            self.wrap_adapter("check_deadlines/maker_refund/send_raw_tx", err)
+                        })?;
+                        self.adapters.on_event(SwapLifecycleEvent::TxSubmitted {
+                            reservation_id,
+                            chain: Chain::Evm,
+                            tx_hash,
+                        });
+                        let next = SwapState::Maker(MakerState::RefundPending {
+                            reservation_id,
+                            deadline,
+                            refund_tx: tx_hash,
+                        });
+                        self.transition(
+                            reservation_id,
+                            runtime,
+                            next,
+                            Some(SideEffectRecord {
+                                kind: SideEffectKind::EvmTxSubmitted,
+                                tx_hash: Some(tx_hash),
+                                completed: false,
+                            }),
+                        )?;
+                        continue;
+                    }
+
+                    let head = self.adapters.block_number().map_err(|err| {
+                        self.wrap_adapter("check_deadlines/maker_refund/block_number", err)
+                    })?;
+                    self.adapters.on_event(SwapLifecycleEvent::TxConfirmed {
+                        reservation_id,
+                        chain: Chain::Evm,
+                        tx_hash: refund_tx,
+                        confirmations: confirmation_depth(head, receipt.block_number),
+                    });
+                    let next = SwapState::Maker(MakerState::Refunded { reservation_id });
+                    self.transition(
+                        reservation_id,
+                        runtime,
+                        next,
+                        Some(SideEffectRecord {
+                            kind: SideEffectKind::EvmTxSubmitted,
+                            tx_hash: Some(refund_tx),
+                            completed: true,
+                        }),
+                    )?;
                 }
                 SwapState::Taker(TakerState::ReservationAccepted { expiry, .. }) => {
                     if now > expiry {
@@ -1072,7 +1180,11 @@ impl<A: HostAdapters> SwapOrchestrator<A> {
                             reservation_id,
                             deadline: expiry,
                         });
-                        let next = SwapState::Taker(TakerState::Refunded { reservation_id });
+                        let next = SwapState::Taker(TakerState::RefundPending {
+                            reservation_id,
+                            deadline: expiry,
+                            refund_tx: tx_hash,
+                        });
                         self.transition(
                             reservation_id,
                             runtime,
@@ -1080,10 +1192,70 @@ impl<A: HostAdapters> SwapOrchestrator<A> {
                             Some(SideEffectRecord {
                                 kind: SideEffectKind::EvmTxSubmitted,
                                 tx_hash: Some(tx_hash),
-                                completed: true,
+                                completed: false,
                             }),
                         )?;
                     }
+                }
+                SwapState::Taker(TakerState::RefundPending {
+                    deadline,
+                    refund_tx,
+                    ..
+                }) => {
+                    let receipt = self.adapters.get_receipt(refund_tx).map_err(|err| {
+                        self.wrap_adapter("check_deadlines/taker_refund/get_receipt", err)
+                    })?;
+                    let Some(receipt) = receipt else {
+                        continue;
+                    };
+                    if !receipt.success {
+                        let tx_payload = command_payload("taker_refund", reservation_id, None);
+                        let tx_hash = self.adapters.send_raw_tx(&tx_payload).map_err(|err| {
+                            self.wrap_adapter("check_deadlines/taker_refund/send_raw_tx", err)
+                        })?;
+                        self.adapters.on_event(SwapLifecycleEvent::TxSubmitted {
+                            reservation_id,
+                            chain: Chain::Evm,
+                            tx_hash,
+                        });
+                        let next = SwapState::Taker(TakerState::RefundPending {
+                            reservation_id,
+                            deadline,
+                            refund_tx: tx_hash,
+                        });
+                        self.transition(
+                            reservation_id,
+                            runtime,
+                            next,
+                            Some(SideEffectRecord {
+                                kind: SideEffectKind::EvmTxSubmitted,
+                                tx_hash: Some(tx_hash),
+                                completed: false,
+                            }),
+                        )?;
+                        continue;
+                    }
+
+                    let head = self.adapters.block_number().map_err(|err| {
+                        self.wrap_adapter("check_deadlines/taker_refund/block_number", err)
+                    })?;
+                    self.adapters.on_event(SwapLifecycleEvent::TxConfirmed {
+                        reservation_id,
+                        chain: Chain::Evm,
+                        tx_hash: refund_tx,
+                        confirmations: confirmation_depth(head, receipt.block_number),
+                    });
+                    let next = SwapState::Taker(TakerState::Refunded { reservation_id });
+                    self.transition(
+                        reservation_id,
+                        runtime,
+                        next,
+                        Some(SideEffectRecord {
+                            kind: SideEffectKind::EvmTxSubmitted,
+                            tx_hash: Some(refund_tx),
+                            completed: true,
+                        }),
+                    )?;
                 }
                 _ => {}
             }
@@ -1246,6 +1418,7 @@ fn state_name(state: &SwapState) -> &'static str {
         SwapState::Maker(MakerState::TauExtracted { .. }) => "TauExtracted",
         SwapState::Maker(MakerState::Settled { .. }) => "Settled",
         SwapState::Maker(MakerState::Refunded { .. }) => "Refunded",
+        SwapState::Maker(MakerState::RefundPending { .. }) => "RefundPending",
         SwapState::Maker(MakerState::Failed { .. }) => "Failed",
         SwapState::Taker(TakerState::Idle) => "Idle",
         SwapState::Taker(TakerState::ReservationAccepted { .. }) => "ReservationAccepted",
@@ -1256,6 +1429,7 @@ fn state_name(state: &SwapState) -> &'static str {
         SwapState::Taker(TakerState::FinalSigPublished { .. }) => "FinalSigPublished",
         SwapState::Taker(TakerState::Settled { .. }) => "Settled",
         SwapState::Taker(TakerState::Refunded { .. }) => "Refunded",
+        SwapState::Taker(TakerState::RefundPending { .. }) => "RefundPending",
         SwapState::Taker(TakerState::Failed { .. }) => "Failed",
     }
 }
@@ -1270,8 +1444,9 @@ fn maker_stage(state: &MakerState) -> u8 {
         MakerState::FinalSigReceived { .. } => 5,
         MakerState::TauExtracted { .. } => 6,
         MakerState::Settled { .. } => 7,
-        MakerState::Refunded { .. } => 8,
-        MakerState::Failed { .. } => 9,
+        MakerState::RefundPending { .. } => 8,
+        MakerState::Refunded { .. } => 9,
+        MakerState::Failed { .. } => 10,
     }
 }
 
@@ -1285,8 +1460,9 @@ fn taker_stage(state: &TakerState) -> u8 {
         TakerState::MoneroTxBroadcast { .. } => 5,
         TakerState::FinalSigPublished { .. } => 6,
         TakerState::Settled { .. } => 7,
-        TakerState::Refunded { .. } => 8,
-        TakerState::Failed { .. } => 9,
+        TakerState::RefundPending { .. } => 8,
+        TakerState::Refunded { .. } => 9,
+        TakerState::Failed { .. } => 10,
     }
 }
 
@@ -1338,15 +1514,23 @@ fn command_payload(
 }
 
 fn derive_tagged_hash(seed: [u8; 32], tag: &[u8]) -> [u8; 32] {
-    let mut out = seed;
-    for (index, byte) in tag.iter().enumerate() {
-        out[index % 32] ^= *byte;
-    }
+    let mut hasher = Keccak256::new();
+    hasher.update(b"equalx/orchestrator/tagged-hash/v1");
+    hasher.update((tag.len() as u16).to_be_bytes());
+    hasher.update(tag);
+    hasher.update(seed);
+    let digest = hasher.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
     out
 }
 
 fn derive_tau_for_reservation(reservation_id: ReservationId) -> [u8; 32] {
     derive_tagged_hash(reservation_id, b"tau")
+}
+
+fn confirmation_depth(head: u64, inclusion_block: u64) -> u64 {
+    head.saturating_sub(inclusion_block).saturating_add(1)
 }
 
 #[cfg(test)]
@@ -1374,6 +1558,8 @@ mod tests {
         evm_payloads: Vec<Vec<u8>>,
         monero_broadcast_calls: usize,
         fail_next_send: Option<AdapterError>,
+        receipt_available: bool,
+        monero_tx_known: bool,
     }
 
     impl MockAdapter {
@@ -1381,6 +1567,8 @@ mod tests {
             Self {
                 inner: Arc::new(Mutex::new(Inner {
                     now,
+                    receipt_available: true,
+                    monero_tx_known: true,
                     ..Inner::default()
                 })),
             }
@@ -1392,6 +1580,14 @@ mod tests {
 
         fn fail_next_send(&self, err: AdapterError) {
             self.inner.lock().expect("mutex").fail_next_send = Some(err);
+        }
+
+        fn set_receipt_available(&self, available: bool) {
+            self.inner.lock().expect("mutex").receipt_available = available;
+        }
+
+        fn set_monero_tx_known(&self, known: bool) {
+            self.inner.lock().expect("mutex").monero_tx_known = known;
         }
 
         fn evm_send_calls(&self) -> usize {
@@ -1483,6 +1679,9 @@ mod tests {
         }
 
         fn get_receipt(&self, tx_hash: [u8; 32]) -> host_adapter::Result<Option<TxReceipt>> {
+            if !self.inner.lock().expect("mutex").receipt_available {
+                return Ok(None);
+            }
             Ok(Some(TxReceipt {
                 tx_hash,
                 block_number: 100,
@@ -1527,7 +1726,11 @@ mod tests {
         }
 
         fn get_tx_confirmations(&self, _tx_hash: &[u8; 32]) -> host_adapter::Result<Option<u64>> {
-            Ok(Some(1))
+            if self.inner.lock().expect("mutex").monero_tx_known {
+                Ok(Some(1))
+            } else {
+                Ok(None)
+            }
         }
 
         fn node_health(&self) -> host_adapter::Result<NodeHealth> {
@@ -1621,6 +1824,12 @@ mod tests {
         }
     }
 
+    fn sample_monero_tx(reservation_id: ReservationId) -> [u8; 32] {
+        let mut monero_tx = [0xA5; 32];
+        monero_tx[0] = reservation_id[0];
+        monero_tx
+    }
+
     #[test]
     fn maker_flow_transitions_and_persists() {
         let adapter = MockAdapter::with_time(1_000);
@@ -1636,7 +1845,9 @@ mod tests {
         orchestrator.maker_set_hashlock(rid).expect("hashlock");
         orchestrator.maker_handle_context(rid).expect("context");
         orchestrator.maker_publish_presig(rid).expect("presig");
-        orchestrator.maker_handle_final_sig(rid).expect("final sig");
+        orchestrator
+            .maker_handle_final_sig(rid, sample_monero_tx(rid))
+            .expect("final sig");
         orchestrator.maker_settle(rid).expect("settle");
 
         let state = orchestrator.state(rid).expect("state");
@@ -1678,7 +1889,9 @@ mod tests {
 
         orchestrator.maker_handle_context(rid).expect("context");
         orchestrator.maker_publish_presig(rid).expect("presig");
-        orchestrator.maker_handle_final_sig(rid).expect("final sig");
+        orchestrator
+            .maker_handle_final_sig(rid, sample_monero_tx(rid))
+            .expect("final sig");
         orchestrator.maker_settle(rid).expect("settle");
 
         let payloads = adapter.evm_payloads();
@@ -1698,6 +1911,51 @@ mod tests {
             settle_payload.ends_with(&expected_tau),
             "settle payload must embed same tau preimage used by hashlock"
         );
+    }
+
+    #[test]
+    fn maker_final_sig_requires_monero_tx_from_verified_evidence() {
+        let adapter = MockAdapter::with_time(1_000);
+        let orchestrator = SwapOrchestrator::new(adapter.clone(), OrchestratorConfig::default());
+        let rid = reservation(0x22);
+
+        orchestrator
+            .maker_create_reservation(ReservationParams {
+                reservation_id: rid,
+                created_at: Some(100),
+            })
+            .expect("create");
+        orchestrator.maker_set_hashlock(rid).expect("hashlock");
+        orchestrator.maker_handle_context(rid).expect("context");
+        orchestrator.maker_publish_presig(rid).expect("presig");
+
+        let zero_err = orchestrator
+            .maker_handle_final_sig(rid, [0u8; 32])
+            .expect_err("zero tx id should be rejected");
+        assert!(matches!(zero_err, OrchestratorError::Adapter { .. }));
+        assert!(matches!(
+            orchestrator.state(rid),
+            Some(SwapState::Maker(MakerState::PresigPublished { .. }))
+        ));
+
+        adapter.set_monero_tx_known(false);
+        let unknown_err = orchestrator
+            .maker_handle_final_sig(rid, sample_monero_tx(rid))
+            .expect_err("unknown tx evidence should be rejected");
+        assert!(matches!(unknown_err, OrchestratorError::Adapter { .. }));
+        assert!(matches!(
+            orchestrator.state(rid),
+            Some(SwapState::Maker(MakerState::PresigPublished { .. }))
+        ));
+
+        adapter.set_monero_tx_known(true);
+        orchestrator
+            .maker_handle_final_sig(rid, sample_monero_tx(rid))
+            .expect("verified final sig evidence");
+        assert!(matches!(
+            orchestrator.state(rid),
+            Some(SwapState::Maker(MakerState::FinalSigReceived { .. }))
+        ));
     }
 
     #[test]
@@ -1767,10 +2025,18 @@ mod tests {
             .expect("create");
 
         adapter.set_time(1000);
-        let events = orchestrator.check_deadlines().expect("deadlines");
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].reservation_id, rid);
-        let state = orchestrator.state(rid).expect("state");
+        let first = orchestrator.check_deadlines().expect("first deadlines");
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].reservation_id, rid);
+        let pending_state = orchestrator.state(rid).expect("pending state");
+        assert!(matches!(
+            pending_state,
+            SwapState::Maker(MakerState::RefundPending { .. })
+        ));
+
+        let second = orchestrator.check_deadlines().expect("second deadlines");
+        assert!(second.is_empty());
+        let state = orchestrator.state(rid).expect("final state");
         assert!(matches!(
             state,
             SwapState::Maker(MakerState::Refunded { .. })
@@ -1800,8 +2066,8 @@ mod tests {
         assert_eq!(adapter.evm_send_calls(), 1, "create submits one tx");
 
         adapter.set_time(1_000);
-        let events = orchestrator.check_deadlines().expect("deadlines");
-        assert_eq!(events.len(), 1);
+        let first = orchestrator.check_deadlines().expect("first deadlines");
+        assert_eq!(first.len(), 1);
         assert_eq!(adapter.evm_send_calls(), 2, "deadline refund submits tx");
         let payloads = adapter.evm_payloads();
         assert!(
@@ -1809,6 +2075,18 @@ mod tests {
                 .last()
                 .is_some_and(|payload| payload.starts_with(b"maker_refund")),
             "deadline path must submit maker_refund payload"
+        );
+        assert!(matches!(
+            orchestrator.state(rid),
+            Some(SwapState::Maker(MakerState::RefundPending { .. }))
+        ));
+
+        let second = orchestrator.check_deadlines().expect("second deadlines");
+        assert!(second.is_empty());
+        assert_eq!(
+            adapter.evm_send_calls(),
+            2,
+            "confirmation poll must not resubmit"
         );
         assert!(matches!(
             orchestrator.state(rid),
@@ -1832,8 +2110,8 @@ mod tests {
         assert_eq!(adapter.evm_send_calls(), 1, "accept submits one tx");
 
         adapter.set_time(1_000);
-        let events = orchestrator.check_deadlines().expect("deadlines");
-        assert_eq!(events.len(), 1);
+        let first = orchestrator.check_deadlines().expect("first deadlines");
+        assert_eq!(first.len(), 1);
         assert_eq!(adapter.evm_send_calls(), 2, "deadline refund submits tx");
         let payloads = adapter.evm_payloads();
         assert!(
@@ -1844,7 +2122,66 @@ mod tests {
         );
         assert!(matches!(
             orchestrator.state(rid),
+            Some(SwapState::Taker(TakerState::RefundPending { .. }))
+        ));
+
+        let second = orchestrator.check_deadlines().expect("second deadlines");
+        assert!(second.is_empty());
+        assert_eq!(
+            adapter.evm_send_calls(),
+            2,
+            "confirmation poll must not resubmit"
+        );
+        assert!(matches!(
+            orchestrator.state(rid),
             Some(SwapState::Taker(TakerState::Refunded { .. }))
+        ));
+    }
+
+    #[test]
+    fn deadline_refund_waits_for_receipt_confirmation() {
+        let adapter = MockAdapter::with_time(100);
+        let config = OrchestratorConfig {
+            maker_timeout_secs: 10,
+            ..OrchestratorConfig::default()
+        };
+        let orchestrator = SwapOrchestrator::new(adapter.clone(), config);
+        let rid = reservation(0x33);
+
+        orchestrator
+            .maker_create_reservation(ReservationParams {
+                reservation_id: rid,
+                created_at: Some(1),
+            })
+            .expect("create");
+
+        adapter.set_receipt_available(false);
+        adapter.set_time(1_000);
+        let first = orchestrator.check_deadlines().expect("first deadlines");
+        assert_eq!(first.len(), 1);
+        assert!(matches!(
+            orchestrator.state(rid),
+            Some(SwapState::Maker(MakerState::RefundPending { .. }))
+        ));
+
+        let second = orchestrator.check_deadlines().expect("second deadlines");
+        assert!(second.is_empty());
+        assert_eq!(
+            adapter.evm_send_calls(),
+            2,
+            "pending refund must wait for receipt and avoid repeated submissions"
+        );
+        assert!(matches!(
+            orchestrator.state(rid),
+            Some(SwapState::Maker(MakerState::RefundPending { .. }))
+        ));
+
+        adapter.set_receipt_available(true);
+        let third = orchestrator.check_deadlines().expect("third deadlines");
+        assert!(third.is_empty());
+        assert!(matches!(
+            orchestrator.state(rid),
+            Some(SwapState::Maker(MakerState::Refunded { .. }))
         ));
     }
 
@@ -1928,7 +2265,9 @@ mod tests {
         orchestrator.maker_set_hashlock(rid).expect("hashlock");
         orchestrator.maker_handle_context(rid).expect("context");
         orchestrator.maker_publish_presig(rid).expect("presig");
-        orchestrator.maker_handle_final_sig(rid).expect("final sig");
+        orchestrator
+            .maker_handle_final_sig(rid, sample_monero_tx(rid))
+            .expect("final sig");
         orchestrator.maker_settle(rid).expect("settle");
 
         let events = adapter.events();
@@ -1944,6 +2283,23 @@ mod tests {
             evt,
             SwapLifecycleEvent::SwapCompleted { reservation_id, outcome: SwapOutcome::Settled } if *reservation_id == rid
         )));
+    }
+
+    #[test]
+    fn tagged_hash_is_domain_separated_keccak() {
+        let seed = reservation(0x44);
+        let tau_hash = derive_tagged_hash(seed, b"tau");
+        let context_hash = derive_tagged_hash(seed, b"context");
+        assert_ne!(tau_hash, context_hash, "different tags must not collide");
+
+        let mut xor_derived = seed;
+        for (index, byte) in b"tau".iter().enumerate() {
+            xor_derived[index % 32] ^= *byte;
+        }
+        assert_ne!(
+            tau_hash, xor_derived,
+            "tagged hash must not regress to xor-mixing placeholder"
+        );
     }
 
     #[test]

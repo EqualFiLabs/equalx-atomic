@@ -347,6 +347,12 @@ fn sample_context() -> MoneroContext {
     }
 }
 
+fn sample_monero_tx(reservation_id: ReservationId) -> [u8; 32] {
+    let mut monero_tx = [0xA5; 32];
+    monero_tx[0] = reservation_id[0];
+    monero_tx
+}
+
 fn checkpoint_bytes_for_state(
     role: SwapRole,
     reservation_id: ReservationId,
@@ -432,7 +438,7 @@ fn execute_valid_prefix(
             }
             if len >= 5 {
                 orchestrator
-                    .maker_handle_final_sig(reservation_id)
+                    .maker_handle_final_sig(reservation_id, sample_monero_tx(reservation_id))
                     .expect("maker_handle_final_sig");
             }
             if len >= 6 {
@@ -511,7 +517,7 @@ fn replay_last_command(
         }
         FlowPrefix::Maker(5) => {
             orchestrator
-                .maker_handle_final_sig(reservation_id)
+                .maker_handle_final_sig(reservation_id, sample_monero_tx(reservation_id))
                 .expect("idempotent maker final sig");
         }
         FlowPrefix::Maker(6) => {
@@ -626,6 +632,13 @@ fn arb_maker_state() -> impl Strategy<Value = MakerState> {
             }
         }),
         any::<[u8; 32]>().prop_map(|reservation_id| MakerState::Refunded { reservation_id }),
+        (any::<[u8; 32]>(), any::<u64>(), any::<[u8; 32]>()).prop_map(
+            |(reservation_id, deadline, refund_tx)| MakerState::RefundPending {
+                reservation_id,
+                deadline,
+                refund_tx,
+            }
+        ),
         (any::<[u8; 32]>(), any::<i32>(), reason, any::<bool>()).prop_map(
             |(reservation_id, error_code, reason, recoverable)| MakerState::Failed {
                 reservation_id,
@@ -671,6 +684,13 @@ fn arb_taker_state() -> impl Strategy<Value = TakerState> {
             .prop_map(|reservation_id| TakerState::FinalSigPublished { reservation_id }),
         any::<[u8; 32]>().prop_map(|reservation_id| TakerState::Settled { reservation_id }),
         any::<[u8; 32]>().prop_map(|reservation_id| TakerState::Refunded { reservation_id }),
+        (any::<[u8; 32]>(), any::<u64>(), any::<[u8; 32]>()).prop_map(
+            |(reservation_id, deadline, refund_tx)| TakerState::RefundPending {
+                reservation_id,
+                deadline,
+                refund_tx,
+            }
+        ),
         (any::<[u8; 32]>(), any::<i32>(), reason, any::<bool>()).prop_map(
             |(reservation_id, error_code, reason, recoverable)| TakerState::Failed {
                 reservation_id,
@@ -1014,7 +1034,9 @@ proptest! {
             matches!(
                 state,
                 SwapState::Maker(MakerState::Refunded { .. })
+                    | SwapState::Maker(MakerState::RefundPending { .. })
                     | SwapState::Taker(TakerState::Refunded { .. })
+                    | SwapState::Taker(TakerState::RefundPending { .. })
             ),
             true
         );
@@ -1147,7 +1169,9 @@ proptest! {
             matches!(
                 state,
                 SwapState::Maker(MakerState::Refunded { .. })
+                    | SwapState::Maker(MakerState::RefundPending { .. })
                     | SwapState::Taker(TakerState::Refunded { .. })
+                    | SwapState::Taker(TakerState::RefundPending { .. })
             ),
             true
         );

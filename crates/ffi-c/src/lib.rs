@@ -4165,10 +4165,16 @@ pub unsafe extern "C" fn eswp_orchestrator_step(
                 .orchestrator
                 .maker_publish_presig(reservation_id)
                 .map_err(|err| FfiError::from(err.code()))?,
-            ESWP_CMD_MAKER_HANDLE_FINAL_SIG => handle
-                .orchestrator
-                .maker_handle_final_sig(reservation_id)
-                .map_err(|err| FfiError::from(err.code()))?,
+            ESWP_CMD_MAKER_HANDLE_FINAL_SIG => {
+                if payload_len != 32 {
+                    return Err(FfiError::LengthInvalid);
+                }
+                let monero_tx_id = read_fixed::<32>(payload_ptr)?;
+                handle
+                    .orchestrator
+                    .maker_handle_final_sig(reservation_id, monero_tx_id)
+                    .map_err(|err| FfiError::from(err.code()))?
+            }
             ESWP_CMD_MAKER_SETTLE => handle
                 .orchestrator
                 .maker_settle(reservation_id)

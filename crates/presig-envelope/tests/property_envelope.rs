@@ -13,7 +13,6 @@ use sha3::{Digest, Keccak256};
 struct EncryptRequestInput {
     taker_secret: [u8; 32],
     taker_pubkey: [u8; 33],
-    maker_eph_secret: Option<[u8; 32]>,
     presig: Vec<u8>,
     context: EnvelopeContext,
 }
@@ -72,19 +71,15 @@ fn arb_envelope_context() -> impl Strategy<Value = EnvelopeContext> {
 fn arb_encrypt_request_input() -> impl Strategy<Value = EncryptRequestInput> {
     (
         arb_secret_key_bytes(),
-        prop_oneof![Just(None), arb_secret_key_bytes().prop_map(Some)],
         prop::collection::vec(any::<u8>(), 0..512),
         arb_envelope_context(),
     )
-        .prop_map(
-            |(taker_secret, maker_eph_secret, presig, context)| EncryptRequestInput {
-                taker_pubkey: taker_pubkey_from_secret(&taker_secret),
-                taker_secret,
-                maker_eph_secret,
-                presig,
-                context,
-            },
-        )
+        .prop_map(|(taker_secret, presig, context)| EncryptRequestInput {
+            taker_pubkey: taker_pubkey_from_secret(&taker_secret),
+            taker_secret,
+            presig,
+            context,
+        })
 }
 
 /// Arbitrary generator: valid Envelope values (built via encrypt function).
@@ -92,7 +87,6 @@ fn arb_envelope() -> impl Strategy<Value = Envelope> {
     arb_encrypt_request_input().prop_filter_map("encryptable envelope", |input| {
         let request = EncryptRequest {
             taker_pubkey: &input.taker_pubkey,
-            maker_eph_secret: input.maker_eph_secret,
             presig: &input.presig,
             context: input.context,
         };
@@ -157,7 +151,6 @@ fn arb_presig_wire_input() -> impl Strategy<Value = ClsagPreSig> {
 fn encode_encryption(input: &EncryptRequestInput) -> EncryptionOutput {
     let request = EncryptRequest {
         taker_pubkey: &input.taker_pubkey,
-        maker_eph_secret: input.maker_eph_secret,
         presig: &input.presig,
         context: input.context,
     };
@@ -345,7 +338,6 @@ fn decrypt_rejects_noncanonical_ephemeral_pubkey_and_mismatched_settlement_diges
     let input = EncryptRequestInput {
         taker_secret,
         taker_pubkey,
-        maker_eph_secret: Some([0x77; 32]),
         presig,
         context,
     };

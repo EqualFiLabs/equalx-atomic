@@ -10,7 +10,7 @@ use hkdf::Hkdf;
 use k256::ecdh::diffie_hellman;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::{PublicKey, SecretKey};
-use rand_core::OsRng;
+use rand_core::{CryptoRng, OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sha3::{Digest, Keccak256};
@@ -114,7 +114,6 @@ pub struct EnvelopeContext {
 #[derive(Clone, Debug)]
 pub struct EncryptRequest<'a> {
     pub taker_pubkey: &'a [u8; 33],
-    pub maker_eph_secret: Option<[u8; 32]>,
     pub presig: &'a [u8],
     pub context: EnvelopeContext,
 }
@@ -161,16 +160,22 @@ pub enum EnvelopeError {
 
 /// Encrypt a pre-signature payload according to the CLSAG adaptor spec.
 pub fn encrypt_presig(req: &EncryptRequest<'_>) -> Result<EncryptionOutput, EnvelopeError> {
+    let mut rng = OsRng;
+    encrypt_presig_with_rng(req, &mut rng)
+}
+
+/// Encrypt a pre-signature payload with a caller-supplied RNG.
+pub fn encrypt_presig_with_rng<R>(
+    req: &EncryptRequest<'_>,
+    rng: &mut R,
+) -> Result<EncryptionOutput, EnvelopeError>
+where
+    R: CryptoRng + RngCore,
+{
     let taker_pub = PublicKey::from_sec1_bytes(req.taker_pubkey)
         .map_err(|_| EnvelopeError::InvalidPublicKey)?;
 
-    let mut rng = OsRng;
-    let maker_secret = match req.maker_eph_secret {
-        Some(bytes) => {
-            SecretKey::from_slice(&bytes).map_err(|_| EnvelopeError::InvalidSecretKey)?
-        }
-        None => SecretKey::random(&mut rng),
-    };
+    let maker_secret = SecretKey::random(rng);
     let maker_scalar = maker_secret.to_nonzero_scalar();
     let maker_pub = PublicKey::from_secret_scalar(&maker_scalar);
 
@@ -323,6 +328,8 @@ mod tests {
     use chacha20poly1305::aead::{Aead, Payload};
     use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce};
     use hkdf::Hkdf;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
     use sha2::Sha256;
 
     #[test]
@@ -352,28 +359,21 @@ mod tests {
         };
 
         let presig = b"example-presig";
-        let maker_eph = [0x42u8; 32];
-
-        let enc = encrypt_presig(&EncryptRequest {
+        let request = EncryptRequest {
             taker_pubkey: &taker_pub_bytes,
-            maker_eph_secret: Some(maker_eph),
             presig,
             context: ctx,
-        })
-        .expect("encrypt");
+        };
+        let mut rng = ChaCha20Rng::from_seed([0x42; 32]);
+        let enc = encrypt_presig_with_rng(&request, &mut rng).expect("encrypt");
 
         let envelope_bytes = enc.envelope.to_bytes();
-        let enc_again = encrypt_presig(&EncryptRequest {
-            taker_pubkey: &taker_pub_bytes,
-            maker_eph_secret: Some(maker_eph),
-            presig,
-            context: ctx,
-        })
-        .expect("encrypt again");
+        let mut rng_again = ChaCha20Rng::from_seed([0x42; 32]);
+        let enc_again = encrypt_presig_with_rng(&request, &mut rng_again).expect("encrypt again");
         assert_eq!(
             envelope_bytes,
             enc_again.envelope.to_bytes(),
-            "envelope encoding must be deterministic for fixed inputs"
+            "envelope encoding must be deterministic for fixed RNG and inputs"
         );
 
         let dec = decrypt_presig(&DecryptRequest {
@@ -406,7 +406,6 @@ mod tests {
 
         let enc = encrypt_presig(&EncryptRequest {
             taker_pubkey: &taker_pub_bytes,
-            maker_eph_secret: Some([0x77; 32]),
             presig: b"payload",
             context: ctx,
         })
@@ -444,7 +443,6 @@ mod tests {
 
         let enc = encrypt_presig(&EncryptRequest {
             taker_pubkey: &taker_pub_bytes,
-            maker_eph_secret: Some([0x31; 32]),
             presig: b"payload",
             context: ctx,
         })
@@ -461,7 +459,7 @@ mod tests {
     }
 
     #[test]
-    fn omitting_ephemeral_secret_uses_fresh_sender_key() {
+    fn default_encryption_uses_fresh_sender_key() {
         let taker_secret = [0x44u8; 32];
         let taker_sk = SecretKey::from_slice(&taker_secret).expect("taker secret");
         let taker_pub = PublicKey::from_secret_scalar(&taker_sk.to_nonzero_scalar());
@@ -481,14 +479,12 @@ mod tests {
 
         let first = encrypt_presig(&EncryptRequest {
             taker_pubkey: &taker_pub_bytes,
-            maker_eph_secret: None,
             presig: b"same-payload",
             context: ctx,
         })
         .expect("first encryption");
         let second = encrypt_presig(&EncryptRequest {
             taker_pubkey: &taker_pub_bytes,
-            maker_eph_secret: None,
             presig: b"same-payload",
             context: ctx,
         })
@@ -568,7 +564,6 @@ mod tests {
         let presig = vec![0xAB; ENVELOPE_WIRE_MAX_LEN - ENVELOPE_WIRE_MIN_LEN + 1];
         let result = encrypt_presig(&EncryptRequest {
             taker_pubkey: &taker_pub_bytes,
-            maker_eph_secret: Some([0x42; 32]),
             presig: &presig,
             context: ctx,
         });
@@ -583,7 +578,6 @@ mod tests {
         let mut taker_pub_bytes = [0u8; 33];
         taker_pub_bytes.copy_from_slice(taker_pub.to_encoded_point(true).as_bytes());
 
-        let maker_eph = [0x37u8; 32];
         let ctx = EnvelopeContext {
             chain_id: 8453,
             escrow_address: [0xAA; 20],
@@ -596,16 +590,17 @@ mod tests {
         };
         let presig = b"manual-crypto-construction";
 
-        let encrypted = encrypt_presig(&EncryptRequest {
+        let request = EncryptRequest {
             taker_pubkey: &taker_pub_bytes,
-            maker_eph_secret: Some(maker_eph),
             presig,
             context: ctx,
-        })
-        .expect("encrypt");
+        };
+        let mut rng = ChaCha20Rng::from_seed([0x37; 32]);
+        let encrypted = encrypt_presig_with_rng(&request, &mut rng).expect("encrypt");
 
         let taker_pub_parsed = PublicKey::from_sec1_bytes(&taker_pub_bytes).expect("pub");
-        let maker_sk = SecretKey::from_slice(&maker_eph).expect("maker secret");
+        let mut expected_rng = ChaCha20Rng::from_seed([0x37; 32]);
+        let maker_sk = SecretKey::random(&mut expected_rng);
         let shared = diffie_hellman(&maker_sk.to_nonzero_scalar(), taker_pub_parsed.as_affine());
 
         let mut okm = [0u8; KEY_LEN + NONCE_LEN];

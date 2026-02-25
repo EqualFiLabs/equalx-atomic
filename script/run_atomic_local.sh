@@ -482,7 +482,6 @@ cargo run --manifest-path "$CARGO_MANIFEST" -p eswp-cli -- atomic-desk tx-proof 
   "${COMMON_CONTEXT_ARGS[@]}" \
   --monero-tx-id "$MONERO_TX_ID" \
   --desk-pubkey "$MAKER_PUBKEY" \
-  --taker-secret "$TAKER_KEY" \
   --mailbox "$MAILBOX" \
   --rpc-url "$ANVIL_RPC" \
   --private-key "$TAKER_KEY" \

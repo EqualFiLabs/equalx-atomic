@@ -58,7 +58,7 @@ pub fn run(args: OrchestratorCli) -> Result<()> {
                 .maker_publish_presig(rid)
                 .context("maker_publish_presig failed")?;
             orchestrator
-                .maker_handle_final_sig(rid)
+                .maker_handle_final_sig(rid, sample_monero_tx(rid))
                 .context("maker_handle_final_sig failed")?;
             orchestrator
                 .maker_settle(rid)
@@ -115,6 +115,12 @@ fn sample_context(reservation_id: ReservationId) -> MoneroContext {
         wire_version: 1,
         envelope: None,
     }
+}
+
+fn sample_monero_tx(reservation_id: ReservationId) -> [u8; 32] {
+    let mut monero_tx = [0xA5; 32];
+    monero_tx[0] = reservation_id[0];
+    monero_tx
 }
 
 fn parse_reservation_id(value: &str) -> Result<ReservationId> {

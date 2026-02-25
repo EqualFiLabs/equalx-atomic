@@ -80,7 +80,7 @@ pub fn run_maker_conformance<A: HostAdapters + Clone>(adapters: A) -> Conformanc
     }
     report.pass("maker_publish_presig", "presig published");
 
-    if let Err(err) = orchestrator.maker_handle_final_sig(rid) {
+    if let Err(err) = orchestrator.maker_handle_final_sig(rid, sample_monero_tx(rid)) {
         report.fail("maker_handle_final_sig", err.to_string());
         return report;
     }
@@ -218,12 +218,30 @@ pub fn run_refund_conformance<A: HostAdapters + Clone>(adapters: A) -> Conforman
     }
 
     match orchestrator.state(rid) {
+        Some(SwapState::Maker(MakerState::RefundPending { .. })) => report.pass(
+            "refund_state_pending",
+            "maker submitted refund and is awaiting receipt",
+        ),
         Some(SwapState::Maker(MakerState::Refunded { .. })) => {
             report.pass("refund_state", "maker moved to Refunded")
         }
         other => report.fail(
             "refund_state",
-            format!("expected maker refunded, got {other:?}"),
+            format!("expected maker refund pending/refunded, got {other:?}"),
+        ),
+    }
+
+    if let Err(err) = orchestrator.check_deadlines() {
+        report.fail("check_deadlines_confirm", err.to_string());
+        return report;
+    }
+    match orchestrator.state(rid) {
+        Some(SwapState::Maker(MakerState::Refunded { .. })) => {
+            report.pass("refund_confirmed", "maker refund confirmed")
+        }
+        other => report.fail(
+            "refund_confirmed",
+            format!("expected maker refunded after confirmation poll, got {other:?}"),
         ),
     }
 
@@ -324,4 +342,10 @@ fn sample_context(seed: ReservationId) -> MoneroContext {
         wire_version: 1,
         envelope: None,
     }
+}
+
+fn sample_monero_tx(seed: ReservationId) -> [u8; 32] {
+    let mut monero_tx = [0xA5; 32];
+    monero_tx[0] = seed[0];
+    monero_tx
 }
