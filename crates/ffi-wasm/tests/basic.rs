@@ -196,15 +196,17 @@ fn clsag_complete_and_extract_roundtrip_via_js_exports() {
 }
 
 #[wasm_bindgen_test]
-fn clsag_complete_accepts_legacy_pre_payload() {
+fn clsag_complete_rejects_legacy_pre_payload() {
     let (ctx, settlement, witness, message, swap_id) = sample_fixture();
     let (pre, tau) =
         adaptor_make_pre_sig(&ctx, &witness, &message, &swap_id, settlement.clone()).unwrap();
     let legacy_pre = encode_pre_bytes_for_test(&message, &ctx, &pre, &swap_id, Some(&tau));
 
     let secret = [0x5Au8; 32];
-    let final_bytes = eswp_clsag_complete_js(&legacy_pre, &secret).expect("complete legacy");
-    let extracted =
-        eswp_clsag_extract_t_js(&legacy_pre, &final_bytes).expect("extract from legacy payload");
-    assert_eq!(extracted, secret);
+    let err = eswp_clsag_complete_js(&legacy_pre, &secret).expect_err("legacy must fail");
+    let msg = err.as_string().unwrap_or_default();
+    assert!(
+        msg.contains("container decode failed"),
+        "unexpected error message: {msg}"
+    );
 }

@@ -782,13 +782,6 @@ fn decode_pre_bytes(bytes: &[u8]) -> Result<DecodedPre, FfiError> {
     for _ in 0..responses_len {
         s_tilde.push(take_array::<32>(proof, &mut cursor)?);
     }
-    if cursor < proof.len() {
-        let tau_length = read_u32(proof, &mut cursor)?;
-        if tau_length != ADAPTOR_SCALAR_LEN as u32 {
-            return Err(FfiError::LengthInvalid);
-        }
-        let _legacy_tau = take_array::<32>(proof, &mut cursor)?;
-    }
     if cursor != proof.len() {
         return Err(FfiError::Decode);
     }
@@ -2388,7 +2381,7 @@ mod tests {
     }
 
     #[test]
-    fn pre_encoding_omits_tau_and_accepts_legacy_payload() {
+    fn pre_encoding_omits_tau_and_rejects_legacy_payload() {
         let (ctx, settlement, witness, message, swap_id) = sample_fixture();
         let (pre, tau) =
             adaptor_make_pre_sig(&ctx, &witness, &message, &swap_id, settlement).unwrap();
@@ -2416,9 +2409,10 @@ mod tests {
             .extend_from_slice(&(ADAPTOR_SCALAR_LEN as u32).to_le_bytes());
         legacy.proof_bytes_sans_resp.extend_from_slice(&tau);
         let legacy_bytes = legacy.encode().expect("encode legacy payload");
-        let decoded_legacy = decode_pre_bytes(&legacy_bytes).expect("decode legacy payload");
-        assert_eq!(decoded_legacy.pre.pre_hash, pre.pre_hash);
-        assert_eq!(decoded_legacy.pre.j, pre.j);
+        assert!(
+            matches!(decode_pre_bytes(&legacy_bytes), Err(FfiError::Decode)),
+            "legacy payloads with embedded tau must be rejected"
+        );
     }
 
     #[test]

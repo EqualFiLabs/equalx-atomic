@@ -347,13 +347,6 @@ fn decode_pre_bytes(bytes: &[u8]) -> Result<DecodedPre, WasmError> {
     for _ in 0..responses_len {
         s_tilde.push(take_array::<32>(proof, &mut cursor)?);
     }
-    if cursor < proof.len() {
-        let tau_length = read_u32(proof, &mut cursor)?;
-        if tau_length != ADAPTOR_SCALAR_LEN as u32 {
-            return Err(WasmError::Length);
-        }
-        let _legacy_tau = take_array::<32>(proof, &mut cursor)?;
-    }
     if cursor != proof.len() {
         return Err(WasmError::Decode);
     }
