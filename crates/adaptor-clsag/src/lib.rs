@@ -101,6 +101,7 @@ pub struct FinalSig {
 }
 
 /// Signer witness (private x, true index i_star).
+/// Must remain local to the Monero signer; never send this to counterparties.
 #[derive(Clone, Debug)]
 pub struct SignerWitness {
     pub x: [u8; 32], // scalar LE (reduced)
@@ -240,7 +241,26 @@ pub fn derive_transcript(
     (tr, t, r, pre_hash)
 }
 
+fn derive_signing_rng_seed(
+    witness: &SignerWitness,
+    pre_hash: &[u8; 32],
+    swap_id: &[u8; 32],
+    j: usize,
+) -> [u8; 32] {
+    let mut h = Sha3_256::new();
+    h.update(b"EqualX/0.0.1/CLSAG-Adaptor/signing-seed");
+    h.update(pre_hash);
+    h.update(swap_id);
+    h.update((j as u32).to_le_bytes());
+    h.update(witness.x);
+    h.update(witness.mask);
+    h.update((witness.amount).to_le_bytes());
+    h.update((witness.i_star as u32).to_le_bytes());
+    h.finalize().into()
+}
+
 /// make_pre_sig: skeleton that returns shaped data; real math deferred to Phase 1.
+/// The caller must be the Monero signer that controls `witness`.
 pub fn make_pre_sig(
     ctx: &ClsagCtx,
     witness: &SignerWitness,
@@ -307,8 +327,9 @@ pub fn make_pre_sig(
     let clsag_ctx =
         ClsagContext::new(decoys, commitment.clone()).expect("failed to build CLSAG context");
 
-    // Use deterministic RNG to keep vector fixtures stable until transcript-derived randomness lands.
-    let mut rng = ChaCha20Rng::from_seed([9u8; 32]);
+    // Derive a signer-secret-bound nonce seed for deterministic, non-publicly predictable CLSAG randomness.
+    let signing_seed = derive_signing_rng_seed(witness, &pre_hash, swap_id, j);
+    let mut rng = ChaCha20Rng::from_seed(signing_seed);
     let inputs = vec![(Zeroizing::new(witness.secret_key()), clsag_ctx)];
     let msg_hash = message_hash;
     let mut clsag_outputs =
@@ -482,4 +503,54 @@ pub fn make_pre_sig_into_tx(
     }
 
     Ok((pre, tau, blob))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{derive_signing_rng_seed, SignerWitness};
+
+    fn witness(i_star: usize, tweak: u8) -> SignerWitness {
+        let mut x = [0u8; 32];
+        let mut mask = [0u8; 32];
+        x[0] = 1u8.saturating_add(tweak);
+        mask[0] = 2u8.saturating_add(tweak);
+        SignerWitness {
+            x,
+            mask,
+            amount: 7 + u64::from(tweak),
+            i_star,
+        }
+    }
+
+    #[test]
+    fn signing_seed_changes_when_pre_hash_changes() {
+        let signer = witness(2, 0);
+        let swap_id = [7u8; 32];
+        let mut pre_hash_a = [1u8; 32];
+        let mut pre_hash_b = pre_hash_a;
+        pre_hash_b[31] ^= 0xA5;
+
+        let seed_a = derive_signing_rng_seed(&signer, &pre_hash_a, &swap_id, 3);
+        let seed_b = derive_signing_rng_seed(&signer, &pre_hash_b, &swap_id, 3);
+        assert_ne!(seed_a, seed_b);
+
+        // Ensure deterministic output for reproducible vectors.
+        pre_hash_a[0] ^= 0x5A;
+        let seed_c = derive_signing_rng_seed(&signer, &pre_hash_a, &swap_id, 3);
+        let seed_d = derive_signing_rng_seed(&signer, &pre_hash_a, &swap_id, 3);
+        assert_eq!(seed_c, seed_d);
+    }
+
+    #[test]
+    fn signing_seed_changes_when_signer_witness_changes() {
+        let pre_hash = [9u8; 32];
+        let swap_id = [3u8; 32];
+
+        let signer_a = witness(1, 0);
+        let signer_b = witness(1, 9);
+
+        let seed_a = derive_signing_rng_seed(&signer_a, &pre_hash, &swap_id, 4);
+        let seed_b = derive_signing_rng_seed(&signer_b, &pre_hash, &swap_id, 4);
+        assert_ne!(seed_a, seed_b);
+    }
 }

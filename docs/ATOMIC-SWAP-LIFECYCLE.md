@@ -63,14 +63,20 @@ The EqualX atomic swap system consists of four primary smart contracts and suppo
 **Maker/Desk**
 - Provides liquidity by depositing collateral
 - Creates atomic swap reservations
-- Generates CLSAG adaptor presignatures
+- Coordinates encrypted mailbox exchange and settlement
 - Settles swaps by revealing the adaptor secret (τ)
 
 **Taker**
 - Initiates atomic swaps by accepting reservations
 - Provides Monero transaction context and ring structure
-- Completes adaptor signatures and broadcasts Monero transactions
+- Completes swap-side obligations and receives settlement assets
 - Receives Ethereum/ERC20 assets upon successful completion
+
+**Monero Signer (Role-Bound)**
+- Owns the Monero spend key (`SignerWitness`) for the input being spent
+- Generates the CLSAG adaptor presignature locally
+- Completes the final signature and broadcasts the Monero transaction
+- Never shares Monero private key material with the counterparty
 
 **Committee**
 - Monitors for stuck or disputed reservations
@@ -205,13 +211,17 @@ struct ContextEnvelope {
 mailbox.publishContext(reservationId, encryptedEnvelope);
 ```
 
-#### **Step 8: Presignature Message (Desk → Taker)**
+#### **Step 8: Presignature Message (Monero Signer → Counterparty)**
 
-**Desk Processing:**
+**Signer Processing:**
 1. Retrieves encrypted context from Mailbox
-2. Decrypts using desk private key and ephemeral public key
+2. Decrypts using signer-side mailbox private key and ephemeral public key
 3. Validates AAD matches reservation parameters
 4. Generates CLSAG adaptor presignature
+
+**Key Ownership Requirement:** `make_clsag_presig(..., witness, ...)` requires the signer's Monero witness.
+The Monero signer MUST construct the presignature inside their own trust boundary; witness/private key
+material must never be transmitted over mailbox or RPC.
 
 **Presignature Generation:**
 ```rust
@@ -255,13 +265,13 @@ Proof bytes (c1_tilde, s_tilde[], d_tilde, pseudo_out)
 mailbox.publishPreSig(reservationId, encryptedPresigEnvelope);
 ```
 
-#### **Step 9: Final Signature Message (Taker → Desk)**
+#### **Step 9: Final Signature Message (Monero Signer → Counterparty)**
 
-**Taker Processing:**
+**Signer Processing:**
 1. Retrieves and decrypts presignature from Mailbox
 2. Completes CLSAG signature using their secret scalar
 3. Broadcasts Monero transaction with completed signature
-4. Creates transaction proof for desk verification
+4. Creates transaction proof for authorized settler verification
 
 **Signature Completion:**
 ```rust
@@ -290,7 +300,7 @@ mailbox.publishFinalSig(reservationId, encryptedProofEnvelope);
 
 #### **Step 10: Tau Extraction and Settlement**
 
-**Desk Processing:**
+**Authorized Settler Processing (Desk and/or Committee):**
 1. Retrieves and decrypts final signature proof
 2. Extracts adaptor secret: `τ = s[j] - ŝ[j] (mod order)`
 3. Verifies Monero transaction exists and is valid
@@ -719,6 +729,10 @@ async function monitorReservations() {
 ---
 
 ## **8. Integration Guide**
+
+**Role Binding Note:** The code samples below show one concrete messaging flow, but the CLSAG
+presign/complete operations always execute on the side that controls `SignerWitness` (Monero spend key).
+If that side is the taker, swap the signer-specific operations accordingly.
 
 ### **8.1 Maker Integration Example**
 
