@@ -382,7 +382,7 @@ impl<A: HostAdapters> SwapOrchestrator<A> {
             ));
         }
 
-        let tau = reservation_id;
+        let tau = derive_tau_for_reservation(reservation_id);
         let hashlock = equalx_sdk::compute_hashlock(&tau);
         let tx_payload = command_payload("maker_set_hashlock", reservation_id, Some(&hashlock));
         let tx_hash = match self.adapters.send_raw_tx(&tx_payload) {
@@ -598,7 +598,7 @@ impl<A: HostAdapters> SwapOrchestrator<A> {
                 ));
             }
             if stage == 5 {
-                let tau = derive_tagged_hash(reservation_id, b"tau");
+                let tau = derive_tau_for_reservation(reservation_id);
                 let next = SwapState::Maker(MakerState::TauExtracted {
                     reservation_id,
                     tau,
@@ -1021,6 +1021,15 @@ impl<A: HostAdapters> SwapOrchestrator<A> {
                 SwapState::Maker(MakerState::ReservationCreated { created_at, .. }) => {
                     let deadline = created_at.saturating_add(self.config.maker_timeout_secs);
                     if now > deadline {
+                        let tx_payload = command_payload("maker_refund", reservation_id, None);
+                        let tx_hash = self.adapters.send_raw_tx(&tx_payload).map_err(|err| {
+                            self.wrap_adapter("check_deadlines/maker_refund/send_raw_tx", err)
+                        })?;
+                        self.adapters.on_event(SwapLifecycleEvent::TxSubmitted {
+                            reservation_id,
+                            chain: Chain::Evm,
+                            tx_hash,
+                        });
                         self.adapters
                             .on_event(SwapLifecycleEvent::DeadlineExceeded {
                                 reservation_id,
@@ -1031,11 +1040,29 @@ impl<A: HostAdapters> SwapOrchestrator<A> {
                             deadline,
                         });
                         let next = SwapState::Maker(MakerState::Refunded { reservation_id });
-                        self.transition(reservation_id, runtime, next, None)?;
+                        self.transition(
+                            reservation_id,
+                            runtime,
+                            next,
+                            Some(SideEffectRecord {
+                                kind: SideEffectKind::EvmTxSubmitted,
+                                tx_hash: Some(tx_hash),
+                                completed: true,
+                            }),
+                        )?;
                     }
                 }
                 SwapState::Taker(TakerState::ReservationAccepted { expiry, .. }) => {
                     if now > expiry {
+                        let tx_payload = command_payload("taker_refund", reservation_id, None);
+                        let tx_hash = self.adapters.send_raw_tx(&tx_payload).map_err(|err| {
+                            self.wrap_adapter("check_deadlines/taker_refund/send_raw_tx", err)
+                        })?;
+                        self.adapters.on_event(SwapLifecycleEvent::TxSubmitted {
+                            reservation_id,
+                            chain: Chain::Evm,
+                            tx_hash,
+                        });
                         self.adapters
                             .on_event(SwapLifecycleEvent::DeadlineExceeded {
                                 reservation_id,
@@ -1046,7 +1073,16 @@ impl<A: HostAdapters> SwapOrchestrator<A> {
                             deadline: expiry,
                         });
                         let next = SwapState::Taker(TakerState::Refunded { reservation_id });
-                        self.transition(reservation_id, runtime, next, None)?;
+                        self.transition(
+                            reservation_id,
+                            runtime,
+                            next,
+                            Some(SideEffectRecord {
+                                kind: SideEffectKind::EvmTxSubmitted,
+                                tx_hash: Some(tx_hash),
+                                completed: true,
+                            }),
+                        )?;
                     }
                 }
                 _ => {}
@@ -1309,6 +1345,10 @@ fn derive_tagged_hash(seed: [u8; 32], tag: &[u8]) -> [u8; 32] {
     out
 }
 
+fn derive_tau_for_reservation(reservation_id: ReservationId) -> [u8; 32] {
+    derive_tagged_hash(reservation_id, b"tau")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1331,6 +1371,7 @@ mod tests {
         checkpoints: HashMap<ReservationId, Vec<u8>>,
         events: Vec<SwapLifecycleEvent>,
         evm_send_calls: usize,
+        evm_payloads: Vec<Vec<u8>>,
         monero_broadcast_calls: usize,
         fail_next_send: Option<AdapterError>,
     }
@@ -1355,6 +1396,10 @@ mod tests {
 
         fn evm_send_calls(&self) -> usize {
             self.inner.lock().expect("mutex").evm_send_calls
+        }
+
+        fn evm_payloads(&self) -> Vec<Vec<u8>> {
+            self.inner.lock().expect("mutex").evm_payloads.clone()
         }
 
         fn monero_broadcast_calls(&self) -> usize {
@@ -1413,12 +1458,13 @@ mod tests {
     }
 
     impl EvmExecutionAdapter for MockAdapter {
-        fn send_raw_tx(&self, _signed_tx: &[u8]) -> host_adapter::Result<[u8; 32]> {
+        fn send_raw_tx(&self, signed_tx: &[u8]) -> host_adapter::Result<[u8; 32]> {
             let mut inner = self.inner.lock().expect("mutex");
             if let Some(err) = inner.fail_next_send.take() {
                 return Err(err);
             }
             inner.evm_send_calls += 1;
+            inner.evm_payloads.push(signed_tx.to_vec());
             let mut hash = [0u8; 32];
             hash[0] = inner.evm_send_calls as u8;
             Ok(hash)
@@ -1609,6 +1655,52 @@ mod tests {
     }
 
     #[test]
+    fn maker_hashlock_and_settle_use_same_tau_preimage() {
+        let adapter = MockAdapter::with_time(1_000);
+        let orchestrator = SwapOrchestrator::new(adapter.clone(), OrchestratorConfig::default());
+        let rid = reservation(0x21);
+        let expected_tau = derive_tau_for_reservation(rid);
+        let expected_hashlock = equalx_sdk::compute_hashlock(&expected_tau);
+
+        orchestrator
+            .maker_create_reservation(ReservationParams {
+                reservation_id: rid,
+                created_at: Some(100),
+            })
+            .expect("create");
+        orchestrator.maker_set_hashlock(rid).expect("hashlock");
+
+        let state_after_hashlock = orchestrator.state(rid).expect("state after hashlock");
+        assert!(matches!(
+            state_after_hashlock,
+            SwapState::Maker(MakerState::HashlockSet { hashlock, .. }) if hashlock == expected_hashlock
+        ));
+
+        orchestrator.maker_handle_context(rid).expect("context");
+        orchestrator.maker_publish_presig(rid).expect("presig");
+        orchestrator.maker_handle_final_sig(rid).expect("final sig");
+        orchestrator.maker_settle(rid).expect("settle");
+
+        let payloads = adapter.evm_payloads();
+        let hashlock_payload = payloads
+            .iter()
+            .find(|payload| payload.starts_with(b"maker_set_hashlock"))
+            .expect("maker_set_hashlock payload");
+        assert!(
+            hashlock_payload.ends_with(&expected_hashlock),
+            "hashlock payload must embed keccak256(tau)"
+        );
+        let settle_payload = payloads
+            .iter()
+            .find(|payload| payload.starts_with(b"maker_settle"))
+            .expect("maker_settle payload");
+        assert!(
+            settle_payload.ends_with(&expected_tau),
+            "settle payload must embed same tau preimage used by hashlock"
+        );
+    }
+
+    #[test]
     fn taker_flow_is_idempotent_on_replay() {
         let adapter = MockAdapter::with_time(1_000);
         let orchestrator = SwapOrchestrator::new(adapter.clone(), OrchestratorConfig::default());
@@ -1686,6 +1778,73 @@ mod tests {
         assert!(!matches!(
             state,
             SwapState::Maker(MakerState::Failed { .. })
+        ));
+    }
+
+    #[test]
+    fn maker_deadline_refund_submits_refund_tx() {
+        let adapter = MockAdapter::with_time(100);
+        let config = OrchestratorConfig {
+            maker_timeout_secs: 10,
+            ..OrchestratorConfig::default()
+        };
+        let orchestrator = SwapOrchestrator::new(adapter.clone(), config);
+        let rid = reservation(0x31);
+
+        orchestrator
+            .maker_create_reservation(ReservationParams {
+                reservation_id: rid,
+                created_at: Some(1),
+            })
+            .expect("create");
+        assert_eq!(adapter.evm_send_calls(), 1, "create submits one tx");
+
+        adapter.set_time(1_000);
+        let events = orchestrator.check_deadlines().expect("deadlines");
+        assert_eq!(events.len(), 1);
+        assert_eq!(adapter.evm_send_calls(), 2, "deadline refund submits tx");
+        let payloads = adapter.evm_payloads();
+        assert!(
+            payloads
+                .last()
+                .is_some_and(|payload| payload.starts_with(b"maker_refund")),
+            "deadline path must submit maker_refund payload"
+        );
+        assert!(matches!(
+            orchestrator.state(rid),
+            Some(SwapState::Maker(MakerState::Refunded { .. }))
+        ));
+    }
+
+    #[test]
+    fn taker_deadline_refund_submits_refund_tx() {
+        let adapter = MockAdapter::with_time(200);
+        let config = OrchestratorConfig {
+            taker_timeout_secs: 10,
+            ..OrchestratorConfig::default()
+        };
+        let orchestrator = SwapOrchestrator::new(adapter.clone(), config);
+        let rid = reservation(0x32);
+
+        orchestrator
+            .taker_accept_reservation(rid)
+            .expect("accept reservation");
+        assert_eq!(adapter.evm_send_calls(), 1, "accept submits one tx");
+
+        adapter.set_time(1_000);
+        let events = orchestrator.check_deadlines().expect("deadlines");
+        assert_eq!(events.len(), 1);
+        assert_eq!(adapter.evm_send_calls(), 2, "deadline refund submits tx");
+        let payloads = adapter.evm_payloads();
+        assert!(
+            payloads
+                .last()
+                .is_some_and(|payload| payload.starts_with(b"taker_refund")),
+            "deadline path must submit taker_refund payload"
+        );
+        assert!(matches!(
+            orchestrator.state(rid),
+            Some(SwapState::Taker(TakerState::Refunded { .. }))
         ));
     }
 
